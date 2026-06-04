@@ -1,12 +1,16 @@
-#include "whisper_realtime.h"
+#include "microphone_audio_source.h"
+#include "streaming_whisper.h"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -43,7 +47,7 @@ int main(int argc, char ** argv) {
     std::signal(SIGINT, stop);
     std::signal(SIGTERM, stop);
 
-    vox::asr::RealtimeWhisperConfig config;
+    vox::asr::StreamingWhisperConfig config;
     config.model_path = resolve_model_path(argc > 1 ? argv[1] : "models/ggml-base.bin");
     if (argc > 2) {
         config.language = argv[2];
@@ -56,20 +60,29 @@ int main(int argc, char ** argv) {
     }
 
     try {
-        vox::asr::RealtimeWhisper recognizer(config);
+        vox::asr::StreamingWhisper recognizer(config);
+        vox::app::MicrophoneAudioSource microphone(-1, config.window_ms);
+        microphone.start();
 
         std::cout << "vox listening: " << config.model_path
                   << " language=" << config.language << "\n";
 
-        recognizer.run(
-            [](const vox::asr::Transcript & transcript) {
+        const auto print_transcripts = [](const std::vector<vox::asr::Transcript> & transcripts) {
+            for (const vox::asr::Transcript & transcript : transcripts) {
                 std::cout << "[" << transcript.chunk_index << "] " << transcript.text << "\n";
-                std::cout.flush();
-                return true;
-            },
-            [] {
-                return g_running.load();
-            });
+            }
+            std::cout.flush();
+        };
+
+        while (g_running.load() && microphone.poll_events()) {
+            const std::vector<float> samples = microphone.read(config.step_ms);
+            if (samples.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                continue;
+            }
+            print_transcripts(recognizer.push_audio(samples));
+        }
+        print_transcripts(recognizer.flush());
     } catch (const std::exception & error) {
         std::cerr << "vox failed: " << error.what() << "\n";
         return 1;

@@ -1,4 +1,4 @@
-#include "whisper_model.h"
+#include "streaming_whisper.h"
 
 #include <algorithm>
 #include <cctype>
@@ -137,23 +137,58 @@ int main() {
     try {
         const WavPcm wav = read_wav_pcm16_mono_16khz(audio_path);
 
-        vox::asr::WhisperModelConfig config;
+        vox::asr::StreamingWhisperConfig config;
         config.model_path = model_path.string();
         config.language = "en";
         config.threads = 4;
         config.use_gpu = false;
         config.flash_attention = false;
+        config.step_ms = 2000;
+        config.window_ms = 6000;
+        config.overlap_ms = 300;
 
-        vox::asr::WhisperModel model(config);
-        const std::string transcript = model.transcribe(wav.samples);
+        vox::asr::StreamingWhisper recognizer(config);
+        std::vector<vox::asr::Transcript> transcripts;
+
+        constexpr size_t chunk_samples = 1379;
+        for (size_t offset = 0; offset < wav.samples.size(); offset += chunk_samples) {
+            const size_t count = std::min(chunk_samples, wav.samples.size() - offset);
+            std::vector<vox::asr::Transcript> chunk_transcripts =
+                recognizer.push_audio(wav.samples.data() + offset, count);
+            transcripts.insert(
+                transcripts.end(),
+                chunk_transcripts.begin(),
+                chunk_transcripts.end());
+        }
+        std::vector<vox::asr::Transcript> final_transcripts = recognizer.flush();
+        transcripts.insert(
+            transcripts.end(),
+            final_transcripts.begin(),
+            final_transcripts.end());
+
+        std::string transcript;
+        bool saw_final = false;
+        for (const vox::asr::Transcript & result : transcripts) {
+            std::cout << "[" << result.chunk_index << "] "
+                      << (result.is_final ? "final: " : "partial: ")
+                      << result.text << "\n";
+            transcript += " " + result.text;
+            saw_final = saw_final || result.is_final;
+        }
         const std::string normalized = lower(transcript);
-
-        std::cout << transcript << "\n";
 
         if (!contains(normalized, "ask not") ||
             !contains(normalized, "country") ||
             !contains(normalized, "for you")) {
             std::cerr << "unexpected JFK transcript: " << transcript << "\n";
+            return 1;
+        }
+        if (!saw_final) {
+            std::cerr << "streaming ASR did not produce a final transcript\n";
+            return 1;
+        }
+        if (!recognizer.flush().empty()) {
+            std::cerr << "repeated flush produced duplicate transcripts\n";
             return 1;
         }
     } catch (const std::exception & error) {

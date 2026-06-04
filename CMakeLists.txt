@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 option(VOX_BUILD_TESTS "Build Vox tests" ON)
+option(VOX_BUILD_APPS "Build Vox command-line applications" ON)
 if(APPLE)
     option(VOX_ENABLE_LLAMA_METAL "Enable the llama.cpp Metal backend on Apple platforms" ON)
 else()
@@ -52,59 +53,63 @@ endif()
 
 find_package(Threads REQUIRED)
 
-find_package(SDL2 QUIET)
+if(VOX_BUILD_APPS)
+    find_package(SDL2 QUIET)
 
-set(VOX_SDL2_TARGET "")
-set(VOX_SDL2_CFLAGS "")
-set(VOX_SDL2_LIBS "")
-set(VOX_SDL2_INCLUDE_DIRS "")
+    set(VOX_SDL2_TARGET "")
+    set(VOX_SDL2_CFLAGS "")
+    set(VOX_SDL2_LIBS "")
+    set(VOX_SDL2_INCLUDE_DIRS "")
 
-if(TARGET SDL2::SDL2)
-    set(VOX_SDL2_TARGET SDL2::SDL2)
-elseif(SDL2_FOUND)
-    set(VOX_SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
-    set(VOX_SDL2_LIBS ${SDL2_LIBRARIES})
-else()
-    find_program(SDL2_CONFIG_EXECUTABLE sdl2-config)
-    if(NOT SDL2_CONFIG_EXECUTABLE)
-        message(FATAL_ERROR "SDL2 was not found. Install it first, for example: brew install sdl2")
+    if(TARGET SDL2::SDL2)
+        set(VOX_SDL2_TARGET SDL2::SDL2)
+    elseif(SDL2_FOUND)
+        set(VOX_SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIRS})
+        set(VOX_SDL2_LIBS ${SDL2_LIBRARIES})
+    else()
+        find_program(SDL2_CONFIG_EXECUTABLE sdl2-config)
+        if(NOT SDL2_CONFIG_EXECUTABLE)
+            message(FATAL_ERROR "SDL2 was not found. Install it first, for example: brew install sdl2")
+        endif()
+
+        execute_process(
+            COMMAND "${SDL2_CONFIG_EXECUTABLE}" --cflags
+            OUTPUT_VARIABLE VOX_SDL2_CFLAGS_RAW
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY
+        )
+        execute_process(
+            COMMAND "${SDL2_CONFIG_EXECUTABLE}" --libs
+            OUTPUT_VARIABLE VOX_SDL2_LIBS_RAW
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            COMMAND_ERROR_IS_FATAL ANY
+        )
+
+        separate_arguments(VOX_SDL2_CFLAGS UNIX_COMMAND "${VOX_SDL2_CFLAGS_RAW}")
+        separate_arguments(VOX_SDL2_LIBS UNIX_COMMAND "${VOX_SDL2_LIBS_RAW}")
     endif()
 
-    execute_process(
-        COMMAND "${SDL2_CONFIG_EXECUTABLE}" --cflags
-        OUTPUT_VARIABLE VOX_SDL2_CFLAGS_RAW
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        COMMAND_ERROR_IS_FATAL ANY
+    add_library(vox_sdl_audio STATIC
+        "${VOX_WHISPER_SOURCE_DIR}/examples/common-sdl.cpp"
     )
-    execute_process(
-        COMMAND "${SDL2_CONFIG_EXECUTABLE}" --libs
-        OUTPUT_VARIABLE VOX_SDL2_LIBS_RAW
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        COMMAND_ERROR_IS_FATAL ANY
+    target_include_directories(vox_sdl_audio
+        PUBLIC
+            "${VOX_WHISPER_SOURCE_DIR}/examples"
+            ${VOX_SDL2_INCLUDE_DIRS}
     )
-
-    separate_arguments(VOX_SDL2_CFLAGS UNIX_COMMAND "${VOX_SDL2_CFLAGS_RAW}")
-    separate_arguments(VOX_SDL2_LIBS UNIX_COMMAND "${VOX_SDL2_LIBS_RAW}")
-endif()
-
-add_library(vox_sdl_audio STATIC
-    "${VOX_WHISPER_SOURCE_DIR}/examples/common-sdl.cpp"
-)
-target_include_directories(vox_sdl_audio
-    PUBLIC
-        "${VOX_WHISPER_SOURCE_DIR}/examples"
-        ${VOX_SDL2_INCLUDE_DIRS}
-)
-target_compile_options(vox_sdl_audio PUBLIC ${VOX_SDL2_CFLAGS})
-if(VOX_SDL2_TARGET)
-    target_link_libraries(vox_sdl_audio PUBLIC ${VOX_SDL2_TARGET})
-else()
-    target_link_libraries(vox_sdl_audio PUBLIC ${VOX_SDL2_LIBS})
+    target_compile_options(vox_sdl_audio PUBLIC ${VOX_SDL2_CFLAGS})
+    if(VOX_SDL2_TARGET)
+        target_link_libraries(vox_sdl_audio PUBLIC ${VOX_SDL2_TARGET})
+    else()
+        target_link_libraries(vox_sdl_audio PUBLIC ${VOX_SDL2_LIBS})
+    endif()
 endif()
 
 add_subdirectory(asr)
 add_subdirectory(translate)
-add_subdirectory(apps)
+if(VOX_BUILD_APPS)
+    add_subdirectory(apps)
+endif()
 
 if(VOX_BUILD_TESTS)
     enable_testing()

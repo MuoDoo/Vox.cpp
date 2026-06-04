@@ -4,7 +4,7 @@ Local voice-to-voice experiments in C++. The first milestone is realtime local s
 
 ## Current Target
 
-`asr/` is a small realtime Whisper ASR component. `translate/` is a llama.cpp translation component for GGUF translation models. `apps/vox.cpp` is the main program entry; for now it starts ASR and prints transcripts.
+`asr/` is a streaming Whisper ASR component that accepts mono float32 PCM at 16 kHz. `translate/` is a llama.cpp translation component for GGUF translation models. `apps/vox.cpp` is the main program entry; for now it captures microphone audio, feeds ASR, and prints transcripts.
 
 No network service is used at runtime. You need local model files under `models/`.
 
@@ -33,6 +33,13 @@ Then build:
 ```sh
 cmake -S . -B build
 cmake --build build --target vox -j
+```
+
+Build only the reusable libraries and tests without the SDL microphone app:
+
+```sh
+cmake -S . -B build-core -DVOX_BUILD_APPS=OFF
+cmake --build build-core -j
 ```
 
 Build the translation component:
@@ -106,7 +113,23 @@ Chinese example:
 ./build/bin/vox models/ggml-small.bin zh
 ```
 
-The app intentionally has no CLI framework yet. The ASR behavior lives in `vox::asr::RealtimeWhisper`.
+The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper`; SDL microphone capture is an app-layer adapter.
+
+## ASR Stream API
+
+`vox::asr::StreamingWhisper` is independent of microphones and SDL. Feed it mono float32 PCM at 16 kHz:
+
+```cpp
+vox::asr::StreamingWhisper recognizer(config);
+
+for (const auto & transcript : recognizer.push_audio(samples)) {
+    // Partial transcript for a processed window.
+}
+
+for (const auto & transcript : recognizer.flush()) {
+    // Final transcript for the end of the stream.
+}
+```
 
 ## Test
 
