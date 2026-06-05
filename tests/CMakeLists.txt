@@ -38,6 +38,25 @@ target_link_libraries(vox_translation_pipeline_test
 
 add_test(NAME vox_translation_pipeline_test COMMAND vox_translation_pipeline_test)
 
+add_executable(vox_asr_translate_jfk_test
+    asr_translate_jfk_test.cpp
+)
+
+target_link_libraries(vox_asr_translate_jfk_test
+    PRIVATE
+        vox_translation_pipeline
+)
+
+target_compile_definitions(vox_asr_translate_jfk_test
+    PRIVATE
+        VOX_TEST_MODEL_PATH="${CMAKE_SOURCE_DIR}/models/ggml-base.bin"
+        VOX_TEST_AUDIO_PATH="${VOX_WHISPER_SOURCE_DIR}/samples/jfk.wav"
+        VOX_TEST_TRANSLATE_MODEL_PATH="${CMAKE_SOURCE_DIR}/models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf"
+)
+
+add_test(NAME vox_asr_translate_jfk_test COMMAND vox_asr_translate_jfk_test)
+set_tests_properties(vox_asr_translate_jfk_test PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(vox_translate_hymt_test
     translate_hymt_test.cpp
 )
