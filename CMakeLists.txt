@@ -107,6 +107,7 @@ endif()
 
 add_subdirectory(asr)
 add_subdirectory(translate)
+add_subdirectory(pipeline)
 if(VOX_BUILD_APPS)
     add_subdirectory(apps)
 endif()

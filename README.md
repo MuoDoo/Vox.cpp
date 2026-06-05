@@ -113,7 +113,19 @@ Chinese example:
 ./build/bin/vox models/ggml-small.bin zh
 ```
 
-The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper`; SDL microphone capture is an app-layer adapter.
+Enable live translation by passing the translation model and target language after the ASR model and language:
+
+```sh
+./build/bin/vox \
+  models/ggml-base.bin \
+  en \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  Chinese
+```
+
+The app translates ASR updates on a worker thread so llama.cpp inference does not block microphone capture. If translation falls behind, pending partial ASR updates are coalesced to the latest text; final results are always processed.
+
+The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper`; SDL microphone capture is an app-layer adapter. The reusable ASR-to-translation scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator`.
 
 ## ASR Stream API
 
@@ -149,5 +161,5 @@ Run only the translation model test:
 ## Next Milestones
 
 1. Improve streaming UX by stabilizing partial/final segments.
-2. Wire ASR chunks into the local llama.cpp translation component.
+2. Improve translated partial-text stability.
 3. Add local TTS and audio playback for voice-to-voice translation.

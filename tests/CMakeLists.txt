@@ -27,6 +27,17 @@ target_link_libraries(vox_translate_component_test
 
 add_test(NAME vox_translate_component_test COMMAND vox_translate_component_test)
 
+add_executable(vox_translation_pipeline_test
+    translation_pipeline_test.cpp
+)
+
+target_link_libraries(vox_translation_pipeline_test
+    PRIVATE
+        vox_translation_pipeline
+)
+
+add_test(NAME vox_translation_pipeline_test COMMAND vox_translation_pipeline_test)
+
 add_executable(vox_translate_hymt_test
     translate_hymt_test.cpp
 )
