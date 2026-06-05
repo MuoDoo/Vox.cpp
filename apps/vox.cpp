@@ -1,3 +1,4 @@
+#include "async_transcript_translator.h"
 #include "microphone_audio_source.h"
 #include "streaming_whisper.h"
 
@@ -8,6 +9,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,42 +50,95 @@ int main(int argc, char ** argv) {
     std::signal(SIGINT, stop);
     std::signal(SIGTERM, stop);
 
-    vox::asr::StreamingWhisperConfig config;
-    config.model_path = resolve_model_path(argc > 1 ? argv[1] : "models/ggml-base.bin");
+    vox::asr::StreamingWhisperConfig asr_config;
+    asr_config.model_path = resolve_model_path(argc > 1 ? argv[1] : "models/ggml-base.bin");
     if (argc > 2) {
-        config.language = argv[2];
+        asr_config.language = argv[2];
     }
 
-    if (!file_exists(config.model_path)) {
-        std::cerr << "Missing model: " << config.model_path << "\n"
+    if (!file_exists(asr_config.model_path)) {
+        std::cerr << "Missing model: " << asr_config.model_path << "\n"
                   << "Download: ./external/whisper.cpp/models/download-ggml-model.sh base models\n";
         return 1;
     }
 
+    const std::string translation_model_path =
+        argc > 3 ? resolve_model_path(argv[3]) : std::string();
+    if (!translation_model_path.empty() && !file_exists(translation_model_path)) {
+        std::cerr << "Missing translation model: " << translation_model_path << "\n"
+                  << "Download: scripts/download-hymt-gguf.sh\n";
+        return 1;
+    }
+
     try {
-        vox::asr::StreamingWhisper recognizer(config);
-        vox::app::MicrophoneAudioSource microphone(-1, config.window_ms);
+        std::mutex output_mutex;
+        std::unique_ptr<vox::pipeline::AsyncTranscriptTranslator> translator;
+        if (!translation_model_path.empty()) {
+            vox::translate::LlamaTranslatorConfig translate_config;
+            translate_config.model_path = translation_model_path;
+            translate_config.source_language = asr_config.language;
+            if (argc > 4) {
+                translate_config.target_language = argv[4];
+            }
+
+            translator = std::make_unique<vox::pipeline::AsyncTranscriptTranslator>(
+                std::move(translate_config),
+                [&output_mutex](vox::pipeline::TranslationResult result) {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    if (!result.error.empty()) {
+                        std::cerr << "[" << result.transcript.chunk_index
+                                  << "] translation failed: " << result.error << "\n";
+                        return;
+                    }
+                    std::cout << "[" << result.transcript.chunk_index << "] "
+                              << (result.transcript.is_final ? "translation final: " : "translation: ")
+                              << result.translation << "\n";
+                    std::cout.flush();
+                });
+        }
+
+        vox::asr::StreamingWhisper recognizer(asr_config);
+        vox::app::MicrophoneAudioSource microphone(-1, asr_config.window_ms);
         microphone.start();
 
-        std::cout << "vox listening: " << config.model_path
-                  << " language=" << config.language << "\n";
-
-        const auto print_transcripts = [](const std::vector<vox::asr::Transcript> & transcripts) {
-            for (const vox::asr::Transcript & transcript : transcripts) {
-                std::cout << "[" << transcript.chunk_index << "] " << transcript.text << "\n";
+        {
+            std::lock_guard<std::mutex> lock(output_mutex);
+            std::cout << "vox listening: " << asr_config.model_path
+                      << " language=" << asr_config.language;
+            if (translator) {
+                std::cout << " translation_model=" << translation_model_path;
             }
-            std::cout.flush();
+            std::cout << "\n";
+        }
+
+        const auto handle_transcripts =
+            [&output_mutex, &translator](const std::vector<vox::asr::Transcript> & transcripts) {
+            for (const vox::asr::Transcript & transcript : transcripts) {
+                {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    std::cout << "[" << transcript.chunk_index << "] "
+                              << (transcript.is_final ? "asr final: " : "asr: ")
+                              << transcript.text << "\n";
+                    std::cout.flush();
+                }
+                if (translator) {
+                    translator->submit(transcript);
+                }
+            }
         };
 
         while (g_running.load() && microphone.poll_events()) {
-            const std::vector<float> samples = microphone.read(config.step_ms);
+            const std::vector<float> samples = microphone.read(asr_config.step_ms);
             if (samples.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
-            print_transcripts(recognizer.push_audio(samples));
+            handle_transcripts(recognizer.push_audio(samples));
         }
-        print_transcripts(recognizer.flush());
+        handle_transcripts(recognizer.flush());
+        if (translator) {
+            translator->close();
+        }
     } catch (const std::exception & error) {
         std::cerr << "vox failed: " << error.what() << "\n";
         return 1;

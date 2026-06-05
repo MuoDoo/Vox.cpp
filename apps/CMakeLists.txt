@@ -5,7 +5,7 @@ add_executable(vox
 
 target_link_libraries(vox
     PRIVATE
-        vox_realtime_asr
+        vox_translation_pipeline
         vox_sdl_audio
 )
 
