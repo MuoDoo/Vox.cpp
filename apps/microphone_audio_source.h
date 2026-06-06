@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -16,6 +17,7 @@ public:
 
     void start();
     std::vector<float> read(int32_t milliseconds);
+    std::vector<float> read(int32_t milliseconds, const std::function<bool()> & should_continue);
     bool poll_events();
 
 private:

@@ -399,8 +399,17 @@ int main(int argc, char ** argv) {
         vox::asr::Transcript pending_final;
 
         auto last_audio_debug = std::chrono::steady_clock::now();
-        while (g_running.load() && microphone.poll_events()) {
-            std::vector<float> samples = microphone.read(asr_config.step_ms);
+        bool capture_running = true;
+        const auto should_continue_capture = [&microphone, &capture_running]() {
+            capture_running = g_running.load() && microphone.poll_events();
+            return capture_running;
+        };
+
+        while (should_continue_capture()) {
+            std::vector<float> samples = microphone.read(asr_config.step_ms, should_continue_capture);
+            if (!capture_running || !g_running.load()) {
+                break;
+            }
             if (samples.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
