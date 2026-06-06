@@ -4,7 +4,9 @@
 
 #include "common-sdl.h"
 
+#include <chrono>
 #include <stdexcept>
+#include <thread>
 
 namespace vox::app {
 
@@ -29,9 +31,19 @@ public:
 
     std::vector<float> read(int32_t milliseconds) {
         std::vector<float> samples;
-        audio_.get(milliseconds, samples);
-        audio_.clear();
-        return samples;
+        const size_t requested_samples =
+            milliseconds > 0
+                ? static_cast<size_t>(milliseconds) * vox::asr::kWhisperSampleRate / 1000
+                : size_t{0};
+
+        while (true) {
+            audio_.get(milliseconds, samples);
+            if (requested_samples == 0 || samples.size() >= requested_samples) {
+                audio_.clear();
+                return samples;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
     }
 
     bool poll_events() {

@@ -3,6 +3,7 @@
 #include "whisper_model.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <stdexcept>
 #include <utility>
@@ -38,7 +39,10 @@ public:
             throw std::runtime_error("audio samples pointer is null");
         }
 
-        pending_audio_.insert(pending_audio_.end(), samples, samples + sample_count);
+        pending_audio_.reserve(pending_audio_.size() + sample_count);
+        for (size_t i = 0; i < sample_count; ++i) {
+            pending_audio_.push_back(std::isfinite(samples[i]) ? samples[i] : 0.0f);
+        }
         has_unflushed_audio_ = true;
 
         std::vector<Transcript> transcripts;
@@ -66,7 +70,7 @@ public:
             std::vector<float> tail;
             tail.swap(pending_audio_);
             append_transcript(tail, true, transcripts);
-        } else if (!window_audio_.empty()) {
+        } else if (!window_audio_.empty() && has_audible_signal(window_audio_)) {
             const std::string text = model_->transcribe(window_audio_);
             if (!text.empty()) {
                 transcripts.push_back(Transcript{chunk_index_, text, true});
@@ -110,11 +114,39 @@ private:
         next_window.insert(next_window.end(), new_audio.begin(), new_audio.end());
         window_audio_.swap(next_window);
 
+        if (!has_audible_signal(new_audio)) {
+            ++chunk_index_;
+            return;
+        }
+
         const std::string text = model_->transcribe(window_audio_);
         if (!text.empty()) {
             transcripts.push_back(Transcript{chunk_index_, text, is_final});
         }
         ++chunk_index_;
+    }
+
+    bool has_audible_signal(const std::vector<float> & samples) const {
+        if (config_.min_audio_rms <= 0.0f) {
+            return true;
+        }
+
+        double sum_squares = 0.0;
+        size_t sample_count = 0;
+        for (const float sample : samples) {
+            if (!std::isfinite(sample)) {
+                continue;
+            }
+            sum_squares += static_cast<double>(sample) * static_cast<double>(sample);
+            ++sample_count;
+        }
+
+        if (sample_count == 0) {
+            return false;
+        }
+
+        const double rms = std::sqrt(sum_squares / static_cast<double>(sample_count));
+        return rms >= static_cast<double>(config_.min_audio_rms);
     }
 
     void normalize_config() {
@@ -128,6 +160,9 @@ private:
         config_.step_ms = std::max(250, clamp_positive(config_.step_ms, 2000));
         config_.window_ms = std::max(config_.step_ms, clamp_positive(config_.window_ms, 6000));
         config_.overlap_ms = std::max(0, std::min(config_.overlap_ms, config_.step_ms));
+        config_.min_audio_rms = std::max(0.0f, config_.min_audio_rms);
+        config_.no_speech_threshold = std::max(0.0f, config_.no_speech_threshold);
+        config_.min_token_probability = std::max(0.0f, config_.min_token_probability);
     }
 
     void initialize_model() {
@@ -135,6 +170,10 @@ private:
         model_config.model_path = config_.model_path;
         model_config.language = config_.language;
         model_config.threads = config_.threads;
+        model_config.no_speech_threshold = config_.no_speech_threshold;
+        model_config.min_token_probability = config_.min_token_probability;
+        model_config.debug = config_.debug;
+        model_config.no_timestamps = config_.no_timestamps;
         model_config.use_gpu = config_.use_gpu;
         model_config.flash_attention = config_.flash_attention;
         model_ = std::make_unique<WhisperModel>(std::move(model_config));

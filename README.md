@@ -113,6 +113,56 @@ Chinese example:
 ./build/bin/vox models/ggml-small.bin zh
 ```
 
+For live Whisper ASR, prefer the CPU path first:
+
+```sh
+./build/bin/vox --capture 2 --final-only \
+  --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
+  models/ggml-small.bin zh
+```
+
+On short streaming windows, the whisper.cpp Metal/GPU path can be slower or less stable than CPU, especially with small ASR models. If the app captures audio but produces no ASR output, keep `--no-gpu --no-flash-attn` for Whisper ASR. Translation models can still be tuned separately.
+
+Select a capture device by index from the startup device list:
+
+```sh
+./build/bin/vox --capture 2 models/ggml-base.bin en
+```
+
+For debugging live input, print microphone levels once per second:
+
+```sh
+./build/bin/vox --capture 2 --debug-audio models/ggml-base.bin zh
+```
+
+If Whisper keeps returning no transcript despite visible microphone levels, relax its no-speech filter:
+
+```sh
+./build/bin/vox --capture 2 --debug-audio --no-speech-thold 1.0 models/ggml-base.bin zh
+```
+
+If it produces hallucinated text during silence, add an RMS gate and token-probability filter:
+
+```sh
+./build/bin/vox --capture 2 --debug-audio --whisper-debug \
+  --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
+  models/ggml-small.bin zh
+```
+
+To emit only the last corrected transcript after speech ends:
+
+```sh
+./build/bin/vox --capture 2 --final-only \
+  --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
+  models/ggml-small.bin zh
+```
+
+The streaming window can be tuned with whisper.cpp-style millisecond options:
+
+```sh
+./build/bin/vox --step 3000 --length 10000 --keep 200 models/ggml-base.bin zh
+```
+
 Enable live translation by passing the translation model and target language after the ASR model and language:
 
 ```sh

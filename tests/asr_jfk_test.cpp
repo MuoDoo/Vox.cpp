@@ -191,6 +191,32 @@ int main() {
             std::cerr << "repeated flush produced duplicate transcripts\n";
             return 1;
         }
+
+        vox::asr::StreamingWhisperConfig silence_config;
+        silence_config.model_path = model_path.string();
+        silence_config.language = "auto";
+        silence_config.threads = 4;
+        silence_config.use_gpu = false;
+        silence_config.flash_attention = false;
+        silence_config.step_ms = 1000;
+        silence_config.window_ms = 1000;
+        silence_config.overlap_ms = 0;
+
+        vox::asr::StreamingWhisper silence_recognizer(silence_config);
+        const std::vector<float> silence_samples(2 * vox::asr::kWhisperSampleRate, 0.0f);
+        std::vector<vox::asr::Transcript> silence_transcripts =
+            silence_recognizer.push_audio(silence_samples);
+        const std::vector<vox::asr::Transcript> silence_final =
+            silence_recognizer.flush();
+        silence_transcripts.insert(
+            silence_transcripts.end(),
+            silence_final.begin(),
+            silence_final.end());
+
+        if (!silence_transcripts.empty()) {
+            std::cerr << "silence produced transcripts\n";
+            return 1;
+        }
     } catch (const std::exception & error) {
         std::cerr << error.what() << "\n";
         return 1;

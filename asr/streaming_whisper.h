@@ -19,6 +19,12 @@ struct StreamingWhisperConfig {
     int32_t window_ms = 6000;
     int32_t overlap_ms = 300;
 
+    float min_audio_rms = 0.001f;
+    float no_speech_threshold = 0.6f;
+    float min_token_probability = 0.0f;
+
+    bool debug = false;
+    bool no_timestamps = true;
     bool use_gpu = true;
     bool flash_attention = true;
 };
