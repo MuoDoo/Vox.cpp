@@ -13,6 +13,11 @@ struct WhisperModelConfig {
 
     int32_t threads = 4;
 
+    float no_speech_threshold = 0.6f;
+    float min_token_probability = 0.0f;
+
+    bool debug = false;
+    bool no_timestamps = true;
     bool use_gpu = true;
     bool flash_attention = true;
 };
