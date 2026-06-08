@@ -44,6 +44,19 @@ else()
     message(FATAL_ERROR "llama.cpp submodule not found. Run: git submodule update --init --recursive.")
 endif()
 
+if(EXISTS "${VOX_LLAMA_LOCAL_DIR}/tools/mtmd/CMakeLists.txt")
+    if(NOT DEFINED LLAMA_INSTALL_VERSION)
+        set(LLAMA_INSTALL_VERSION 0.0.0)
+    endif()
+    add_subdirectory(
+        "${VOX_LLAMA_LOCAL_DIR}/tools/mtmd"
+        "${CMAKE_BINARY_DIR}/llama-mtmd"
+        EXCLUDE_FROM_ALL
+    )
+else()
+    message(FATAL_ERROR "llama.cpp mtmd library not found. Update the llama.cpp submodule.")
+endif()
+
 if(EXISTS "${VOX_WHISPER_LOCAL_DIR}/CMakeLists.txt")
     set(VOX_WHISPER_SOURCE_DIR "${VOX_WHISPER_LOCAL_DIR}")
     add_subdirectory("${VOX_WHISPER_SOURCE_DIR}" EXCLUDE_FROM_ALL)
@@ -105,6 +118,7 @@ if(VOX_BUILD_APPS)
     endif()
 endif()
 
+add_subdirectory(llama_runtime)
 add_subdirectory(asr)
 add_subdirectory(translate)
 add_subdirectory(pipeline)

@@ -1,14 +1,12 @@
 #include "llama_translator.h"
 
+#include "llama_runtime.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <clocale>
-#include <cstdio>
 #include <limits>
-#include <mutex>
 #include <stdexcept>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -16,48 +14,6 @@
 
 namespace vox::translate {
 namespace {
-
-void quiet_llama_log(ggml_log_level level, const char * text, void *) {
-    if (level == GGML_LOG_LEVEL_ERROR && text != nullptr) {
-        fputs(text, stderr);
-    }
-}
-
-class LlamaBackend {
-public:
-    LlamaBackend() {
-        std::lock_guard<std::mutex> lock(mutex());
-        if (ref_count() == 0) {
-            std::setlocale(LC_NUMERIC, "C");
-            llama_log_set(quiet_llama_log, nullptr);
-            llama_backend_init();
-            ggml_backend_load_all();
-        }
-        ++ref_count();
-    }
-
-    ~LlamaBackend() {
-        std::lock_guard<std::mutex> lock(mutex());
-        --ref_count();
-        if (ref_count() == 0) {
-            llama_backend_free();
-        }
-    }
-
-    LlamaBackend(const LlamaBackend &) = delete;
-    LlamaBackend & operator=(const LlamaBackend &) = delete;
-
-private:
-    static std::mutex & mutex() {
-        static std::mutex value;
-        return value;
-    }
-
-    static int & ref_count() {
-        static int value = 0;
-        return value;
-    }
-};
 
 struct ModelDeleter {
     void operator()(llama_model * model) const {
@@ -94,11 +50,6 @@ std::string trim_ascii(std::string value) {
     return std::string(begin, end);
 }
 
-int default_thread_count() {
-    const unsigned int count = std::thread::hardware_concurrency();
-    return count == 0 ? 4 : static_cast<int>(count);
-}
-
 } // namespace
 
 std::string make_hymt_prompt(const std::string & text,
@@ -125,7 +76,7 @@ public:
             throw std::runtime_error("llama.cpp max output tokens must be positive");
         }
 
-        backend_ = std::make_unique<LlamaBackend>();
+        runtime_ = std::make_unique<vox::llama::LlamaRuntime>();
 
         llama_model_params model_params = llama_model_default_params();
         model_params.n_gpu_layers = config_.gpu_layers;
@@ -154,7 +105,8 @@ public:
         context_params.n_ctx = static_cast<uint32_t>(config_.context_size);
         context_params.n_batch = static_cast<uint32_t>(std::min(config_.batch_size, config_.context_size));
         context_params.n_ubatch = context_params.n_batch;
-        context_params.n_threads = config_.thread_count > 0 ? config_.thread_count : default_thread_count();
+        context_params.n_threads =
+            config_.thread_count > 0 ? config_.thread_count : vox::llama::default_thread_count();
         context_params.n_threads_batch = context_params.n_threads;
         context_params.no_perf = true;
         context_params.offload_kqv = config_.gpu_layers > 0;
@@ -370,7 +322,7 @@ private:
 
     LlamaTranslatorConfig config_;
     std::array<ggml_backend_dev_t, 2> devices_{};
-    std::unique_ptr<LlamaBackend> backend_;
+    std::unique_ptr<vox::llama::LlamaRuntime> runtime_;
     ModelPtr model_;
     ContextPtr context_;
     SamplerPtr sampler_;

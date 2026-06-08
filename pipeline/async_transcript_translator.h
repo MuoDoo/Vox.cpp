@@ -1,7 +1,7 @@
 #pragma once
 
+#include "asr_types.h"
 #include "llama_translator.h"
-#include "streaming_whisper.h"
 
 #include <functional>
 #include <memory>
