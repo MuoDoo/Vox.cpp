@@ -1,5 +1,6 @@
 #include "async_transcript_translator.h"
 #include "microphone_audio_source.h"
+#include "streaming_qwen_asr.h"
 #include "streaming_whisper.h"
 
 #include <algorithm>
@@ -27,13 +28,20 @@ std::atomic_bool g_running{true};
 #endif
 
 struct CliOptions {
+    std::string asr_engine = "qwen3";
+    std::string asr_mmproj_path;
+    std::string vad_model_path;
     int32_t capture_device_id = -1;
     int32_t step_ms = 0;
     int32_t window_ms = 0;
     int32_t overlap_ms = -1;
     int32_t final_silence_steps = 0;
+    int32_t vad_min_silence_ms = 0;
+    int32_t vad_speech_pad_ms = -1;
+    int32_t vad_max_speech_ms = 0;
     float rms_threshold = -1.0f;
     float no_speech_threshold = -1.0f;
+    float vad_threshold = -1.0f;
     float min_token_probability = 0.0f;
     float input_gain = 1.0f;
     bool show_help = false;
@@ -44,6 +52,24 @@ struct CliOptions {
     bool disable_flash_attention = false;
     bool final_only = false;
     std::vector<std::string> positional;
+};
+
+enum class AsrEngine {
+    Whisper,
+    Qwen3,
+};
+
+struct CommonAsrConfig {
+    std::string model_path;
+    std::string language = "auto";
+    int32_t threads = 4;
+    int32_t step_ms = 2000;
+    int32_t window_ms = 6000;
+    int32_t overlap_ms = 300;
+    float min_audio_rms = 0.001f;
+    bool debug = false;
+    bool use_gpu = true;
+    bool flash_attention = true;
 };
 
 struct AudioStats {
@@ -70,6 +96,26 @@ std::string resolve_model_path(const std::string & model_path) {
 
     const fs::path project_path = fs::path(VOX_PROJECT_ROOT) / requested;
     return project_path.string();
+}
+
+AsrEngine parse_asr_engine(const std::string & value) {
+    if (value == "whisper" || value == "whisper.cpp") {
+        return AsrEngine::Whisper;
+    }
+    if (value == "qwen3" || value == "qwen3-asr" || value == "llama" || value == "llama.cpp") {
+        return AsrEngine::Qwen3;
+    }
+    throw std::runtime_error("unknown ASR engine: " + value);
+}
+
+const char * asr_engine_name(AsrEngine engine) {
+    switch (engine) {
+    case AsrEngine::Whisper:
+        return "whisper";
+    case AsrEngine::Qwen3:
+        return "qwen3";
+    }
+    return "unknown";
 }
 
 int32_t parse_i32(const std::string & value, const std::string & option_name) {
@@ -128,6 +174,12 @@ CliOptions parse_cli(int argc, char ** argv) {
             options.debug_audio = true;
         } else if (arg == "--whisper-debug") {
             options.whisper_debug = true;
+        } else if (arg == "--asr-engine" || arg.rfind("--asr-engine=", 0) == 0) {
+            options.asr_engine = option_value(arg, "--asr-engine", i, argc, argv);
+        } else if (arg == "--asr-mmproj" || arg.rfind("--asr-mmproj=", 0) == 0) {
+            options.asr_mmproj_path = option_value(arg, "--asr-mmproj", i, argc, argv);
+        } else if (arg == "--vad-model" || arg.rfind("--vad-model=", 0) == 0) {
+            options.vad_model_path = option_value(arg, "--vad-model", i, argc, argv);
         } else if (arg == "--no-gpu") {
             options.disable_gpu = true;
         } else if (arg == "--no-flash-attn") {
@@ -147,9 +199,21 @@ CliOptions parse_cli(int argc, char ** argv) {
         } else if (arg == "--final-on-silence" || arg.rfind("--final-on-silence=", 0) == 0) {
             options.final_silence_steps =
                 parse_i32(option_value(arg, "--final-on-silence", i, argc, argv), "--final-on-silence");
+        } else if (arg == "--vad-min-silence-ms" || arg.rfind("--vad-min-silence-ms=", 0) == 0) {
+            options.vad_min_silence_ms =
+                parse_i32(option_value(arg, "--vad-min-silence-ms", i, argc, argv), "--vad-min-silence-ms");
+        } else if (arg == "--vad-speech-pad-ms" || arg.rfind("--vad-speech-pad-ms=", 0) == 0) {
+            options.vad_speech_pad_ms =
+                parse_i32(option_value(arg, "--vad-speech-pad-ms", i, argc, argv), "--vad-speech-pad-ms");
+        } else if (arg == "--vad-max-speech-ms" || arg.rfind("--vad-max-speech-ms=", 0) == 0) {
+            options.vad_max_speech_ms =
+                parse_i32(option_value(arg, "--vad-max-speech-ms", i, argc, argv), "--vad-max-speech-ms");
         } else if (arg == "--rms-threshold" || arg.rfind("--rms-threshold=", 0) == 0) {
             options.rms_threshold =
                 parse_float(option_value(arg, "--rms-threshold", i, argc, argv), "--rms-threshold");
+        } else if (arg == "--vad-threshold" || arg.rfind("--vad-threshold=", 0) == 0) {
+            options.vad_threshold =
+                parse_float(option_value(arg, "--vad-threshold", i, argc, argv), "--vad-threshold");
         } else if (arg == "--gain" || arg.rfind("--gain=", 0) == 0) {
             options.input_gain = parse_float(option_value(arg, "--gain", i, argc, argv), "--gain");
         } else if (arg == "--min-token-p" || arg.rfind("--min-token-p=", 0) == 0) {
@@ -181,11 +245,17 @@ CliOptions parse_cli(int argc, char ** argv) {
     if (options.final_silence_steps < 0) {
         throw std::runtime_error("final silence steps must be non-negative");
     }
+    if (options.vad_min_silence_ms < 0 || options.vad_speech_pad_ms < -1 || options.vad_max_speech_ms < 0) {
+        throw std::runtime_error("VAD timing options must be non-negative");
+    }
     if (options.rms_threshold < -1.0f) {
         throw std::runtime_error("rms threshold must be non-negative");
     }
     if (options.no_speech_threshold < -1.0f) {
         throw std::runtime_error("no-speech threshold must be non-negative");
+    }
+    if (options.vad_threshold < -1.0f || options.vad_threshold > 1.0f) {
+        throw std::runtime_error("VAD threshold must be between 0 and 1");
     }
     if (options.input_gain <= 0.0f) {
         throw std::runtime_error("input gain must be positive");
@@ -196,6 +266,7 @@ CliOptions parse_cli(int argc, char ** argv) {
     if (options.positional.size() > 4) {
         throw std::runtime_error("too many positional arguments");
     }
+    parse_asr_engine(options.asr_engine);
     return options;
 }
 
@@ -203,6 +274,12 @@ void print_usage(const char * program) {
     std::cout << "usage: " << program << " [options] [asr_model] [language] [translation_model] [target_language]\n"
               << "\n"
               << "options:\n"
+              << "      --asr-engine NAME\n"
+              << "                      ASR backend: qwen3 or whisper; default qwen3\n"
+              << "      --asr-mmproj PATH\n"
+              << "                      Qwen3-ASR multimodal projector GGUF path\n"
+              << "      --vad-model PATH\n"
+              << "                      Silero VAD model for Qwen3-ASR utterance mode\n"
               << "  -c, --capture ID    capture device index, or -1 for system default\n"
               << "      --step MS       audio step size in milliseconds\n"
               << "      --length MS     audio window size in milliseconds\n"
@@ -210,6 +287,14 @@ void print_usage(const char * program) {
               << "      --final-on-silence N\n"
               << "                      emit latest transcript as final after N silent windows\n"
               << "      --final-only    suppress partial ASR output; implies --final-on-silence 1\n"
+              << "      --vad-threshold N\n"
+              << "                      Qwen3-ASR VAD speech probability threshold; default 0.5\n"
+              << "      --vad-min-silence-ms MS\n"
+              << "                      Qwen3-ASR silence duration before closing an utterance\n"
+              << "      --vad-speech-pad-ms MS\n"
+              << "                      Qwen3-ASR audio padding kept around detected speech\n"
+              << "      --vad-max-speech-ms MS\n"
+              << "                      Qwen3-ASR maximum utterance length before forced finalization\n"
               << "      --rms-threshold N\n"
               << "                      silence gate RMS threshold; 0 disables it\n"
               << "      --gain N        multiply microphone samples before ASR\n"
@@ -217,10 +302,10 @@ void print_usage(const char * program) {
               << "      --no-speech-thold N\n"
               << "                      Whisper no-speech threshold; 1.0 disables most no-speech filtering\n"
               << "      --no-vad        disable the silence gate\n"
-              << "      --no-gpu        disable Whisper GPU acceleration\n"
-              << "      --no-flash-attn disable Whisper flash attention\n"
+              << "      --no-gpu        disable ASR GPU acceleration\n"
+              << "      --no-flash-attn disable ASR flash attention\n"
               << "      --debug-audio   print microphone sample count, RMS, and peak\n"
-              << "      --whisper-debug print Whisper segment diagnostics\n"
+              << "      --whisper-debug print Whisper diagnostics, or Qwen3-ASR mtmd timings\n"
               << "  -h, --help          show this help\n";
 }
 
@@ -270,43 +355,88 @@ int main(int argc, char ** argv) {
             return 0;
         }
 
-        vox::asr::StreamingWhisperConfig asr_config;
-        asr_config.model_path = resolve_model_path(
-            !cli.positional.empty() ? cli.positional[0] : "models/ggml-base.bin");
+        const AsrEngine asr_engine = parse_asr_engine(cli.asr_engine);
+        const std::string default_asr_model =
+            asr_engine == AsrEngine::Whisper
+                ? "models/ggml-base.bin"
+                : "models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf";
+        const std::string default_qwen_mmproj =
+            "models/asr/qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf";
+        const std::string default_qwen_vad_model = "models/vad/ggml-silero-v6.2.0.bin";
+        const std::string bundled_qwen_vad_model =
+            "external/whisper.cpp/models/for-tests-silero-v6.2.0-ggml.bin";
+
+        CommonAsrConfig common_config;
+        common_config.model_path = resolve_model_path(
+            !cli.positional.empty() ? cli.positional[0] : default_asr_model);
         if (cli.positional.size() > 1) {
-            asr_config.language = cli.positional[1];
+            common_config.language = cli.positional[1];
         }
         if (cli.step_ms > 0) {
-            asr_config.step_ms = cli.step_ms;
+            common_config.step_ms = cli.step_ms;
         }
         if (cli.window_ms > 0) {
-            asr_config.window_ms = cli.window_ms;
+            common_config.window_ms = cli.window_ms;
         }
         if (cli.overlap_ms >= 0) {
-            asr_config.overlap_ms = cli.overlap_ms;
+            common_config.overlap_ms = cli.overlap_ms;
         }
         if (cli.disable_silence_gate) {
-            asr_config.min_audio_rms = 0.0f;
+            common_config.min_audio_rms = 0.0f;
         } else if (cli.rms_threshold >= 0.0f) {
-            asr_config.min_audio_rms = cli.rms_threshold;
-        } else if (asr_config.language != "auto") {
-            asr_config.min_audio_rms = 0.0f;
+            common_config.min_audio_rms = cli.rms_threshold;
+        } else if (common_config.language != "auto") {
+            common_config.min_audio_rms = 0.0f;
         }
-        asr_config.no_speech_threshold =
-            cli.no_speech_threshold >= 0.0f ? cli.no_speech_threshold : 0.95f;
-        asr_config.min_token_probability = cli.min_token_probability;
-        asr_config.debug = cli.whisper_debug;
+        common_config.debug = cli.whisper_debug;
         if (cli.disable_gpu) {
-            asr_config.use_gpu = false;
+            common_config.use_gpu = false;
         }
         if (cli.disable_flash_attention) {
-            asr_config.flash_attention = false;
+            common_config.flash_attention = false;
         }
 
-        if (!file_exists(asr_config.model_path)) {
-            std::cerr << "Missing model: " << asr_config.model_path << "\n"
-                      << "Download: ./external/whisper.cpp/models/download-ggml-model.sh base models\n";
+        if (!file_exists(common_config.model_path)) {
+            std::cerr << "Missing ASR model: " << common_config.model_path << "\n";
+            if (asr_engine == AsrEngine::Whisper) {
+                std::cerr << "Download: ./external/whisper.cpp/models/download-ggml-model.sh base models\n";
+            } else {
+                std::cerr << "Download: scripts/download-qwen3-asr-gguf.sh\n";
+            }
             return 1;
+        }
+
+        std::string qwen_mmproj_path;
+        if (asr_engine == AsrEngine::Qwen3) {
+            qwen_mmproj_path = resolve_model_path(
+                !cli.asr_mmproj_path.empty() ? cli.asr_mmproj_path : default_qwen_mmproj);
+            if (!file_exists(qwen_mmproj_path)) {
+                std::cerr << "Missing Qwen3-ASR mmproj: " << qwen_mmproj_path << "\n"
+                          << "Download: scripts/download-qwen3-asr-gguf.sh\n";
+                return 1;
+            }
+        }
+
+        std::string qwen_vad_model_path;
+        if (asr_engine == AsrEngine::Qwen3 && !cli.disable_silence_gate) {
+            if (!cli.vad_model_path.empty()) {
+                qwen_vad_model_path = resolve_model_path(cli.vad_model_path);
+                if (!file_exists(qwen_vad_model_path)) {
+                    std::cerr << "Missing Qwen3-ASR VAD model: " << qwen_vad_model_path << "\n";
+                    return 1;
+                }
+            } else {
+                const std::string default_path = resolve_model_path(default_qwen_vad_model);
+                const std::string bundled_path = resolve_model_path(bundled_qwen_vad_model);
+                if (file_exists(default_path)) {
+                    qwen_vad_model_path = default_path;
+                } else if (file_exists(bundled_path)) {
+                    qwen_vad_model_path = bundled_path;
+                }
+            }
+            if (!qwen_vad_model_path.empty() && cli.step_ms == 0) {
+                common_config.step_ms = 500;
+            }
         }
 
         const std::string translation_model_path =
@@ -320,11 +450,13 @@ int main(int argc, char ** argv) {
         std::mutex output_mutex;
         std::unique_ptr<vox::pipeline::AsyncTranscriptTranslator> translator;
         const int32_t final_silence_steps =
-            cli.final_silence_steps > 0 ? cli.final_silence_steps : (cli.final_only ? 1 : 0);
+            std::max(cli.final_silence_steps, cli.final_only ? int32_t{1} : int32_t{0});
+        const float whisper_no_speech_threshold =
+            cli.no_speech_threshold >= 0.0f ? cli.no_speech_threshold : 0.95f;
         if (!translation_model_path.empty()) {
             vox::translate::LlamaTranslatorConfig translate_config;
             translate_config.model_path = translation_model_path;
-            translate_config.source_language = asr_config.language;
+            translate_config.source_language = common_config.language;
             if (cli.positional.size() > 3) {
                 translate_config.target_language = cli.positional[3];
             }
@@ -345,26 +477,101 @@ int main(int argc, char ** argv) {
                 });
         }
 
-        vox::asr::StreamingWhisper recognizer(asr_config);
-        vox::app::MicrophoneAudioSource microphone(cli.capture_device_id, asr_config.window_ms);
+        std::unique_ptr<vox::asr::StreamingWhisper> whisper_recognizer;
+        std::unique_ptr<vox::asr::StreamingQwenAsr> qwen_recognizer;
+        if (asr_engine == AsrEngine::Whisper) {
+            vox::asr::StreamingWhisperConfig whisper_config;
+            whisper_config.model_path = common_config.model_path;
+            whisper_config.language = common_config.language;
+            whisper_config.threads = common_config.threads;
+            whisper_config.step_ms = common_config.step_ms;
+            whisper_config.window_ms = common_config.window_ms;
+            whisper_config.overlap_ms = common_config.overlap_ms;
+            whisper_config.min_audio_rms = common_config.min_audio_rms;
+            whisper_config.no_speech_threshold = whisper_no_speech_threshold;
+            whisper_config.min_token_probability = cli.min_token_probability;
+            whisper_config.debug = common_config.debug;
+            whisper_config.use_gpu = common_config.use_gpu;
+            whisper_config.flash_attention = common_config.flash_attention;
+            whisper_recognizer = std::make_unique<vox::asr::StreamingWhisper>(std::move(whisper_config));
+        } else {
+            vox::asr::StreamingQwenAsrConfig qwen_config;
+            qwen_config.model_path = common_config.model_path;
+            qwen_config.mmproj_path = qwen_mmproj_path;
+            qwen_config.language = common_config.language;
+            qwen_config.threads = common_config.threads;
+            qwen_config.step_ms = common_config.step_ms;
+            qwen_config.window_ms = common_config.window_ms;
+            qwen_config.overlap_ms = common_config.overlap_ms;
+            qwen_config.min_audio_rms = common_config.min_audio_rms;
+            qwen_config.debug = common_config.debug;
+            qwen_config.use_gpu = common_config.use_gpu;
+            qwen_config.mmproj_use_gpu = common_config.use_gpu;
+            qwen_config.flash_attention = common_config.flash_attention;
+            qwen_config.vad_model_path = qwen_vad_model_path;
+            qwen_config.use_vad = !cli.disable_silence_gate && !qwen_vad_model_path.empty();
+            qwen_config.utterance_mode = qwen_config.use_vad;
+            if (cli.vad_threshold >= 0.0f) {
+                qwen_config.vad_threshold = cli.vad_threshold;
+            }
+            if (cli.vad_min_silence_ms > 0) {
+                qwen_config.vad_min_silence_ms = cli.vad_min_silence_ms;
+            }
+            if (cli.vad_speech_pad_ms >= 0) {
+                qwen_config.vad_speech_pad_ms = cli.vad_speech_pad_ms;
+            }
+            if (cli.vad_max_speech_ms > 0) {
+                qwen_config.vad_max_speech_ms = cli.vad_max_speech_ms;
+            }
+            qwen_recognizer = std::make_unique<vox::asr::StreamingQwenAsr>(std::move(qwen_config));
+        }
+
+        const auto push_asr_audio =
+            [&whisper_recognizer, &qwen_recognizer, asr_engine](const std::vector<float> & samples) {
+            if (asr_engine == AsrEngine::Whisper) {
+                return whisper_recognizer->push_audio(samples);
+            }
+            return qwen_recognizer->push_audio(samples);
+        };
+        const auto flush_asr =
+            [&whisper_recognizer, &qwen_recognizer, asr_engine]() {
+            if (asr_engine == AsrEngine::Whisper) {
+                return whisper_recognizer->flush();
+            }
+            return qwen_recognizer->flush();
+        };
+
+        vox::app::MicrophoneAudioSource microphone(cli.capture_device_id, common_config.window_ms);
         microphone.start();
 
         {
             std::lock_guard<std::mutex> lock(output_mutex);
-            std::cout << "vox listening: " << asr_config.model_path
-                      << " language=" << asr_config.language
+            std::cout << "vox listening: " << common_config.model_path
+                      << " asr_engine=" << asr_engine_name(asr_engine)
+                      << " language=" << common_config.language
                       << " capture=" << cli.capture_device_id
-                      << " step_ms=" << asr_config.step_ms
-                      << " window_ms=" << asr_config.window_ms
-                      << " keep_ms=" << asr_config.overlap_ms
-                      << " rms_threshold=" << asr_config.min_audio_rms
-                      << " no_speech_thold=" << asr_config.no_speech_threshold
-                      << " min_token_p=" << asr_config.min_token_probability
+                      << " step_ms=" << common_config.step_ms
+                      << " window_ms=" << common_config.window_ms
+                      << " keep_ms=" << common_config.overlap_ms
+                      << " rms_threshold=" << common_config.min_audio_rms
                       << " final_on_silence=" << final_silence_steps
                       << " final_only=" << cli.final_only
                       << " gain=" << cli.input_gain
-                      << " gpu=" << asr_config.use_gpu
-                      << " flash_attn=" << asr_config.flash_attention;
+                      << " gpu=" << common_config.use_gpu
+                      << " flash_attn=" << common_config.flash_attention;
+            if (asr_engine == AsrEngine::Whisper) {
+                std::cout << " no_speech_thold=" << whisper_no_speech_threshold
+                          << " min_token_p=" << cli.min_token_probability;
+            } else {
+                std::cout << " mmproj=" << qwen_mmproj_path
+                          << " qwen_vad=" << (!qwen_vad_model_path.empty() ? "on" : "off");
+                if (!qwen_vad_model_path.empty()) {
+                    const float qwen_vad_threshold =
+                        cli.vad_threshold >= 0.0f ? cli.vad_threshold : 0.5f;
+                    std::cout << " vad_model=" << qwen_vad_model_path
+                              << " vad_threshold=" << qwen_vad_threshold;
+                }
+            }
             if (translator) {
                 std::cout << " translation_model=" << translation_model_path;
             }
@@ -406,7 +613,7 @@ int main(int argc, char ** argv) {
         };
 
         while (should_continue_capture()) {
-            std::vector<float> samples = microphone.read(asr_config.step_ms, should_continue_capture);
+            std::vector<float> samples = microphone.read(common_config.step_ms, should_continue_capture);
             if (!capture_running || !g_running.load()) {
                 break;
             }
@@ -417,8 +624,8 @@ int main(int argc, char ** argv) {
             apply_gain(samples, cli.input_gain);
             const AudioStats stats = measure_audio(samples);
             const bool is_silent =
-                asr_config.min_audio_rms > 0.0f &&
-                stats.rms < static_cast<double>(asr_config.min_audio_rms);
+                common_config.min_audio_rms > 0.0f &&
+                stats.rms < static_cast<double>(common_config.min_audio_rms);
 
             if (cli.debug_audio) {
                 const auto now = std::chrono::steady_clock::now();
@@ -432,9 +639,22 @@ int main(int argc, char ** argv) {
                     last_audio_debug = now;
                 }
             }
-            std::vector<vox::asr::Transcript> transcripts = recognizer.push_audio(samples);
+            std::vector<vox::asr::Transcript> transcripts = push_asr_audio(samples);
             if (final_silence_steps > 0) {
                 if (!transcripts.empty()) {
+                    const bool has_final_transcript = std::any_of(
+                        transcripts.begin(),
+                        transcripts.end(),
+                        [](const vox::asr::Transcript & transcript) {
+                            return transcript.is_final;
+                        });
+                    if (has_final_transcript) {
+                        has_pending_final = false;
+                        silence_steps = 0;
+                        handle_transcripts(transcripts);
+                        continue;
+                    }
+
                     pending_final = transcripts.back();
                     pending_final.is_final = false;
                     has_pending_final = true;
@@ -445,7 +665,7 @@ int main(int argc, char ** argv) {
                     continue;
                 }
 
-                if (is_silent || asr_config.min_audio_rms <= 0.0f) {
+                if (is_silent || common_config.min_audio_rms <= 0.0f) {
                     ++silence_steps;
                 } else {
                     silence_steps = 0;
@@ -467,7 +687,7 @@ int main(int argc, char ** argv) {
         if (has_pending_final) {
             emit_final_transcript(pending_final);
         } else {
-            handle_transcripts(recognizer.flush());
+            handle_transcripts(flush_asr());
         }
         if (translator) {
             translator->close();

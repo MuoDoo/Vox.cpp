@@ -1,11 +1,18 @@
 add_library(vox_realtime_asr STATIC
     whisper_model.cpp
+    silero_vad.cpp
+    streaming_audio_window.cpp
     streaming_whisper.cpp
+    qwen_asr_model.cpp
+    streaming_qwen_asr.cpp
 )
 
 target_link_libraries(vox_realtime_asr
+    PUBLIC
+        vox_llama_runtime
     PRIVATE
         whisper
+        mtmd
         Threads::Threads
 )
 

@@ -1,6 +1,6 @@
 #include "microphone_audio_source.h"
 
-#include "streaming_whisper.h"
+#include "asr_types.h"
 
 #include "common-sdl.h"
 
@@ -15,7 +15,7 @@ public:
     Impl(int32_t capture_device_id, int32_t buffer_ms)
         : buffer_ms_(buffer_ms),
           audio_(buffer_ms) {
-        if (!audio_.init(capture_device_id, vox::asr::kWhisperSampleRate)) {
+        if (!audio_.init(capture_device_id, vox::asr::kAsrSampleRate)) {
             throw std::runtime_error("failed to initialize audio capture");
         }
     }
@@ -46,7 +46,7 @@ public:
         const int32_t capped_ms = capped_milliseconds(milliseconds);
         const size_t requested_samples =
             capped_ms > 0
-                ? static_cast<size_t>(capped_ms) * vox::asr::kWhisperSampleRate / 1000
+                ? static_cast<size_t>(capped_ms) * vox::asr::kAsrSampleRate / 1000
                 : size_t{0};
 
         while (should_continue()) {

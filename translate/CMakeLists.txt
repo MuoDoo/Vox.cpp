@@ -9,5 +9,6 @@ target_include_directories(vox_translate
 
 target_link_libraries(vox_translate
     PUBLIC
+        vox_llama_runtime
         llama
 )

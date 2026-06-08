@@ -1,5 +1,7 @@
 #pragma once
 
+#include "asr_types.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -7,8 +9,6 @@
 #include <vector>
 
 namespace vox::asr {
-
-inline constexpr int32_t kWhisperSampleRate = 16000;
 
 struct StreamingWhisperConfig {
     std::string model_path;
@@ -27,12 +27,6 @@ struct StreamingWhisperConfig {
     bool no_timestamps = true;
     bool use_gpu = true;
     bool flash_attention = true;
-};
-
-struct Transcript {
-    uint64_t chunk_index = 0;
-    std::string text;
-    bool is_final = false;
 };
 
 class StreamingWhisper {

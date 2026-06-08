@@ -1,10 +1,10 @@
 # Vox.cpp
 
-Local voice-to-voice experiments in C++. The first milestone is realtime local speech recognition with `whisper.cpp`; the next milestone is local text translation with `llama.cpp`.
+Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`.
 
 ## Current Target
 
-`asr/` is a streaming Whisper ASR component that accepts mono float32 PCM at 16 kHz. `translate/` is a llama.cpp translation component for GGUF translation models. `apps/vox.cpp` is the main program entry; for now it captures microphone audio, feeds ASR, and prints transcripts.
+`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `apps/vox.cpp` is the main program entry; for now it captures microphone audio, feeds ASR, and prints transcripts.
 
 No network service is used at runtime. You need local model files under `models/`.
 
@@ -57,7 +57,9 @@ cmake --build build --target vox -j
 
 ## Model
 
-Download or place a local GGML model under `models/`. For multilingual recognition, use a non-`.en` model.
+### Whisper ASR
+
+Download or place a local Whisper GGML model under `models/`. For multilingual recognition, use a non-`.en` model.
 
 ```sh
 mkdir -p models
@@ -71,6 +73,31 @@ For Chinese recognition, a larger multilingual model is usually better:
 ```sh
 ./external/whisper.cpp/models/download-ggml-model.sh small models
 ```
+
+### Qwen3-ASR
+
+For the llama.cpp ASR path, use the ggml-org Qwen3-ASR GGUF pair. The default Qwen path expects:
+
+```text
+models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf
+models/asr/qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf
+```
+
+Download both files with:
+
+```sh
+scripts/download-qwen3-asr-gguf.sh
+```
+
+You can use the smaller 0.6B model for faster local experiments:
+
+```sh
+scripts/download-qwen3-asr-gguf.sh 0.6B Q8_0 models/asr/qwen3-asr-0.6b
+```
+
+Qwen3-ASR uses a separate multimodal projector GGUF. Keep the model and `mmproj` quantization matched.
+
+### Translation
 
 Translation models should also live under `models/`. The current `translate/` component is built around Tencent HY-MT1.5 GGUF via `llama.cpp`.
 
@@ -95,28 +122,45 @@ Check the Tencent HY Community License before distributing a product that includ
 
 ## Run
 
-Default model and auto language:
+Default Qwen3-ASR model and auto language:
 
 ```sh
-./build/bin/vox
+./build/bin/vox --final-only
 ```
 
-Explicit model:
+Explicit Qwen3-ASR language:
 
 ```sh
-./build/bin/vox models/ggml-base.bin
+./build/bin/vox --final-only \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  zh
 ```
 
-Chinese example:
+Whisper remains available as a fallback by selecting it explicitly:
 
 ```sh
-./build/bin/vox models/ggml-small.bin zh
+./build/bin/vox --asr-engine whisper models/ggml-base.bin en
+```
+
+Whisper Chinese example:
+
+```sh
+./build/bin/vox --asr-engine whisper models/ggml-small.bin zh
+```
+
+Qwen3-ASR with explicit model and projector:
+
+```sh
+./build/bin/vox \
+  --asr-mmproj models/asr/qwen3-asr-0.6b/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf \
+  models/asr/qwen3-asr-0.6b/Qwen3-ASR-0.6B-Q8_0.gguf \
+  en
 ```
 
 For live Whisper ASR, prefer the CPU path first:
 
 ```sh
-./build/bin/vox --capture 2 --final-only \
+./build/bin/vox --asr-engine whisper --capture 2 --final-only \
   --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
   models/ggml-small.bin zh
 ```
@@ -126,25 +170,25 @@ On short streaming windows, the whisper.cpp Metal/GPU path can be slower or less
 Select a capture device by index from the startup device list:
 
 ```sh
-./build/bin/vox --capture 2 models/ggml-base.bin en
+./build/bin/vox --capture 2 --final-only
 ```
 
 For debugging live input, print microphone levels once per second:
 
 ```sh
-./build/bin/vox --capture 2 --debug-audio models/ggml-base.bin zh
+./build/bin/vox --asr-engine whisper --capture 2 --debug-audio models/ggml-base.bin zh
 ```
 
 If Whisper keeps returning no transcript despite visible microphone levels, relax its no-speech filter:
 
 ```sh
-./build/bin/vox --capture 2 --debug-audio --no-speech-thold 1.0 models/ggml-base.bin zh
+./build/bin/vox --asr-engine whisper --capture 2 --debug-audio --no-speech-thold 1.0 models/ggml-base.bin zh
 ```
 
 If it produces hallucinated text during silence, add an RMS gate and token-probability filter:
 
 ```sh
-./build/bin/vox --capture 2 --debug-audio --whisper-debug \
+./build/bin/vox --asr-engine whisper --capture 2 --debug-audio --whisper-debug \
   --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
   models/ggml-small.bin zh
 ```
@@ -152,21 +196,33 @@ If it produces hallucinated text during silence, add an RMS gate and token-proba
 To emit only the last corrected transcript after speech ends:
 
 ```sh
-./build/bin/vox --capture 2 --final-only \
+./build/bin/vox --asr-engine whisper --capture 2 --final-only \
   --no-gpu --no-flash-attn --gain 2 --rms-threshold 0.006 --min-token-p 0.35 \
   models/ggml-small.bin zh
 ```
 
-The streaming window can be tuned with whisper.cpp-style millisecond options:
+The streaming window can be tuned with millisecond options:
 
 ```sh
-./build/bin/vox --step 3000 --length 10000 --keep 200 models/ggml-base.bin zh
+./build/bin/vox --asr-engine whisper --step 3000 --length 10000 --keep 200 models/ggml-base.bin zh
 ```
 
-Enable live translation by passing the translation model and target language after the ASR model and language:
+Enable live translation by passing the translation model and target language after the ASR model and language. With Qwen3-ASR as the default ASR backend, use this command to transcribe speech and translate the result into English:
 
 ```sh
-./build/bin/vox \
+./build/bin/vox --final-only \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
+The `auto` argument keeps Qwen3-ASR language detection enabled. It is still required here because the current CLI uses positional arguments: `[asr_model] [language] [translation_model] [target_language]`.
+
+The same translation path with Whisper ASR is:
+
+```sh
+./build/bin/vox --asr-engine whisper \
   models/ggml-base.bin \
   en \
   models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
@@ -175,11 +231,11 @@ Enable live translation by passing the translation model and target language aft
 
 The app translates ASR updates on a worker thread so llama.cpp inference does not block microphone capture. If translation falls behind, pending partial ASR updates are coalesced to the latest text; final results are always processed.
 
-The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper`; SDL microphone capture is an app-layer adapter. The reusable ASR-to-translation scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator`.
+The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr`; SDL microphone capture is an app-layer adapter. The reusable ASR-to-translation scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator`.
 
 ## ASR Stream API
 
-`vox::asr::StreamingWhisper` is independent of microphones and SDL. Feed it mono float32 PCM at 16 kHz:
+`vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr` are independent of microphones and SDL. Feed them mono float32 PCM at 16 kHz:
 
 ```cpp
 vox::asr::StreamingWhisper recognizer(config);
@@ -193,9 +249,12 @@ for (const auto & transcript : recognizer.flush()) {
 }
 ```
 
+Qwen3-ASR uses the same streaming shape, with a `StreamingQwenAsrConfig` that includes both `model_path` and `mmproj_path`.
+
 ## Test
 
-The ASR test uses `external/whisper.cpp/samples/jfk.wav` as a local fixture and `models/ggml-base.bin` as the model.
+The Whisper ASR test uses `external/whisper.cpp/samples/jfk.wav` as a local fixture and `models/ggml-base.bin` as the model.
+The Qwen3-ASR config test does not load a model; it covers language option normalization for the llama.cpp path. The Qwen3-ASR smoke test uses `tests/fixtures/asr_en.wav` plus the default Qwen3-ASR 1.7B Q8_0 model and mmproj; if either model is missing, the test is skipped. The smoke test runs on CPU by default; set `VOX_TEST_QWEN_USE_GPU=1` to exercise the GPU path.
 The HY-MT test loads `models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf`; if it is missing, the test is skipped.
 
 ```sh
