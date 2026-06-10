@@ -590,7 +590,7 @@ int main(int argc, char ** argv) {
                 }
             }
 
-            tts_output_dir = resolve_model_path(cli.tts_output_dir);
+            tts_output_dir = cli.tts_output_dir;
             vox::tts::CosyVoice3TtsConfig tts_config;
             tts_config.model_path = tts_model_path;
             tts_config.flow_model_path = tts_flow_model_path;
@@ -644,7 +644,7 @@ int main(int argc, char ** argv) {
 
             translator = std::make_unique<vox::pipeline::AsyncTranscriptTranslator>(
                 std::move(translate_config),
-                [&output_mutex, &submit_tts](vox::pipeline::TranslationResult result) {
+                [&output_mutex, submit_tts](vox::pipeline::TranslationResult result) {
                     if (!result.error.empty()) {
                         std::lock_guard<std::mutex> lock(output_mutex);
                         std::cerr << "[" << result.transcript.chunk_index
