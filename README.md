@@ -1,10 +1,10 @@
 # Vox.cpp
 
-Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`.
+Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`; TTS can synthesize translated text with a native CosyVoice3 GGUF runtime.
 
 ## Current Target
 
-`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `apps/vox.cpp` is the main program entry; for now it captures microphone audio, feeds ASR, and prints transcripts.
+`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `tts/` links the CosyVoice3 GGUF runtime from the CrispASR submodule in-process. `apps/vox.cpp` is the main program entry; it captures microphone audio, feeds ASR, optionally translates transcripts, and can synthesize translated text to wav files.
 
 No network service is used at runtime. You need local model files under `models/`.
 
@@ -120,6 +120,27 @@ The component builds the same translation prompt text and applies the GGUF chat 
 Tencent's model card recommends `top_k=20`, `top_p=0.6`, `temperature=0.7`, and `repeat_penalty=1.05`; these are the component defaults.
 Check the Tencent HY Community License before distributing a product that includes this model.
 
+### CosyVoice3 TTS
+
+The TTS integration calls CrispASR's CosyVoice3 C ABI directly from the `external/CrispASR` submodule. It does not shell out to the `crispasr` executable; model loading, voice lookup, synthesis, and WAV writing failures are surfaced directly in-process.
+
+Download the minimum baked-voice CosyVoice3 GGUF set:
+
+```sh
+scripts/download-cosyvoice3-tts-gguf.sh
+```
+
+That creates:
+
+```text
+models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf
+models/tts/cosyvoice3/cosyvoice3-flow-q8_0.gguf
+models/tts/cosyvoice3/cosyvoice3-hift-f16.gguf
+models/tts/cosyvoice3/cosyvoice3-voices.gguf
+```
+
+Pass the LLM GGUF with `--tts-model`. The runtime auto-discovers sibling flow, HiFT, and voices files when they are in the same directory. If they live elsewhere, pass `--tts-flow-model`, `--tts-hift-model`, and `--tts-voices-model`.
+
 ## Run
 
 Default Qwen3-ASR model and auto language:
@@ -231,7 +252,31 @@ The same translation path with Whisper ASR is:
 
 The app translates ASR updates on a worker thread so llama.cpp inference does not block microphone capture. If translation falls behind, pending partial ASR updates are coalesced to the latest text; final results are always processed.
 
-The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr`; SDL microphone capture is an app-layer adapter. The reusable ASR-to-translation scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator`.
+Enable TTS for translated final results by adding `--tts-model`. This writes one wav per synthesized result under `tts-output/`:
+
+```sh
+./build/bin/vox --final-only \
+  --tts-model models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
+To play each generated wav after synthesis on macOS:
+
+```sh
+./build/bin/vox --final-only --tts-play \
+  --tts-model models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
+By default, TTS only synthesizes final translations to avoid overlapping partial speech. Use `--tts-partials` for lower latency experiments.
+
+The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr`; SDL microphone capture is an app-layer adapter. The reusable scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator` and `vox::pipeline::AsyncTextToSpeech`.
 
 ## ASR Stream API
 
@@ -256,6 +301,7 @@ Qwen3-ASR uses the same streaming shape, with a `StreamingQwenAsrConfig` that in
 The Whisper ASR test uses `external/whisper.cpp/samples/jfk.wav` as a local fixture and `models/ggml-base.bin` as the model.
 The Qwen3-ASR config test does not load a model; it covers language option normalization for the llama.cpp path. The Qwen3-ASR smoke test uses `tests/fixtures/asr_en.wav` plus the default Qwen3-ASR 1.7B Q8_0 model and mmproj; if either model is missing, the test is skipped. The smoke test runs on CPU by default; set `VOX_TEST_QWEN_USE_GPU=1` to exercise the GPU path.
 The HY-MT test loads `models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf`; if it is missing, the test is skipped.
+The TTS WAV writer test does not load a model; it validates the local WAV output path used by the CosyVoice3 synthesizer.
 
 ```sh
 ctest --test-dir build --output-on-failure
@@ -271,4 +317,4 @@ Run only the translation model test:
 
 1. Improve streaming UX by stabilizing partial/final segments.
 2. Improve translated partial-text stability.
-3. Add local TTS and audio playback for voice-to-voice translation.
+3. Add direct audio-device playback for synthesized speech.

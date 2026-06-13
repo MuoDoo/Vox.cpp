@@ -1,4 +1,5 @@
 #include "async_transcript_translator.h"
+#include "async_text_to_speech.h"
 #include "microphone_audio_source.h"
 #include "streaming_qwen_asr.h"
 #include "streaming_whisper.h"
@@ -31,6 +32,13 @@ struct CliOptions {
     std::string asr_engine = "qwen3";
     std::string asr_mmproj_path;
     std::string vad_model_path;
+    std::string tts_model_path;
+    std::string tts_flow_model_path;
+    std::string tts_hift_model_path;
+    std::string tts_voices_model_path;
+    std::string tts_voice = "zero_shot";
+    std::string tts_output_dir = "tts-output";
+    std::string tts_play_command;
     int32_t capture_device_id = -1;
     int32_t step_ms = 0;
     int32_t window_ms = 0;
@@ -39,11 +47,15 @@ struct CliOptions {
     int32_t vad_min_silence_ms = 0;
     int32_t vad_speech_pad_ms = -1;
     int32_t vad_max_speech_ms = 0;
+    int32_t tts_threads = 0;
+    int32_t tts_max_tokens = 0;
     float rms_threshold = -1.0f;
     float no_speech_threshold = -1.0f;
     float vad_threshold = -1.0f;
     float min_token_probability = 0.0f;
     float input_gain = 1.0f;
+    float tts_temperature = 0.8f;
+    uint64_t tts_seed = 42;
     bool show_help = false;
     bool disable_silence_gate = false;
     bool debug_audio = false;
@@ -51,6 +63,8 @@ struct CliOptions {
     bool disable_gpu = false;
     bool disable_flash_attention = false;
     bool final_only = false;
+    bool tts_play = false;
+    bool tts_partials = false;
     std::vector<std::string> positional;
 };
 
@@ -148,6 +162,21 @@ float parse_float(const std::string & value, const std::string & option_name) {
     return parsed_value;
 }
 
+uint64_t parse_u64(const std::string & value, const std::string & option_name) {
+    size_t parsed = 0;
+    unsigned long long parsed_value = 0;
+    try {
+        parsed_value = std::stoull(value, &parsed);
+    } catch (const std::exception &) {
+        throw std::runtime_error("invalid value for " + option_name + ": " + value);
+    }
+
+    if (parsed != value.size()) {
+        throw std::runtime_error("invalid value for " + option_name + ": " + value);
+    }
+    return static_cast<uint64_t>(parsed_value);
+}
+
 std::string option_value(
     const std::string & arg,
     const std::string & option_name,
@@ -180,12 +209,40 @@ CliOptions parse_cli(int argc, char ** argv) {
             options.asr_mmproj_path = option_value(arg, "--asr-mmproj", i, argc, argv);
         } else if (arg == "--vad-model" || arg.rfind("--vad-model=", 0) == 0) {
             options.vad_model_path = option_value(arg, "--vad-model", i, argc, argv);
+        } else if (arg == "--tts-model" || arg.rfind("--tts-model=", 0) == 0) {
+            options.tts_model_path = option_value(arg, "--tts-model", i, argc, argv);
+        } else if (arg == "--tts-flow-model" || arg.rfind("--tts-flow-model=", 0) == 0) {
+            options.tts_flow_model_path = option_value(arg, "--tts-flow-model", i, argc, argv);
+        } else if (arg == "--tts-hift-model" || arg.rfind("--tts-hift-model=", 0) == 0) {
+            options.tts_hift_model_path = option_value(arg, "--tts-hift-model", i, argc, argv);
+        } else if (arg == "--tts-voices-model" || arg.rfind("--tts-voices-model=", 0) == 0) {
+            options.tts_voices_model_path = option_value(arg, "--tts-voices-model", i, argc, argv);
+        } else if (arg == "--tts-voice" || arg.rfind("--tts-voice=", 0) == 0) {
+            options.tts_voice = option_value(arg, "--tts-voice", i, argc, argv);
+        } else if (arg == "--tts-output-dir" || arg.rfind("--tts-output-dir=", 0) == 0) {
+            options.tts_output_dir = option_value(arg, "--tts-output-dir", i, argc, argv);
+        } else if (arg == "--tts-play-command" || arg.rfind("--tts-play-command=", 0) == 0) {
+            options.tts_play_command = option_value(arg, "--tts-play-command", i, argc, argv);
+        } else if (arg == "--tts-threads" || arg.rfind("--tts-threads=", 0) == 0) {
+            options.tts_threads = parse_i32(option_value(arg, "--tts-threads", i, argc, argv), "--tts-threads");
+        } else if (arg == "--tts-max-tokens" || arg.rfind("--tts-max-tokens=", 0) == 0) {
+            options.tts_max_tokens =
+                parse_i32(option_value(arg, "--tts-max-tokens", i, argc, argv), "--tts-max-tokens");
+        } else if (arg == "--tts-temperature" || arg.rfind("--tts-temperature=", 0) == 0) {
+            options.tts_temperature =
+                parse_float(option_value(arg, "--tts-temperature", i, argc, argv), "--tts-temperature");
+        } else if (arg == "--tts-seed" || arg.rfind("--tts-seed=", 0) == 0) {
+            options.tts_seed = parse_u64(option_value(arg, "--tts-seed", i, argc, argv), "--tts-seed");
         } else if (arg == "--no-gpu") {
             options.disable_gpu = true;
         } else if (arg == "--no-flash-attn") {
             options.disable_flash_attention = true;
         } else if (arg == "--final-only") {
             options.final_only = true;
+        } else if (arg == "--tts-play") {
+            options.tts_play = true;
+        } else if (arg == "--tts-partials") {
+            options.tts_partials = true;
         } else if (arg == "--no-vad" || arg == "--no-silence-gate") {
             options.disable_silence_gate = true;
         } else if (arg == "-c" || arg == "--capture" || arg.rfind("--capture=", 0) == 0) {
@@ -266,6 +323,23 @@ CliOptions parse_cli(int argc, char ** argv) {
     if (options.positional.size() > 4) {
         throw std::runtime_error("too many positional arguments");
     }
+    if (!options.tts_model_path.empty()) {
+        if (options.tts_voice.empty()) {
+            throw std::runtime_error("TTS voice must not be empty");
+        }
+        if (options.tts_output_dir.empty()) {
+            throw std::runtime_error("TTS output directory must not be empty");
+        }
+        if (options.tts_threads < 0) {
+            throw std::runtime_error("TTS thread count must be positive");
+        }
+        if (options.tts_max_tokens < 0) {
+            throw std::runtime_error("TTS max tokens must be non-negative");
+        }
+        if (options.tts_temperature < 0.0f) {
+            throw std::runtime_error("TTS temperature must be non-negative");
+        }
+    }
     parse_asr_engine(options.asr_engine);
     return options;
 }
@@ -280,6 +354,32 @@ void print_usage(const char * program) {
               << "                      Qwen3-ASR multimodal projector GGUF path\n"
               << "      --vad-model PATH\n"
               << "                      Silero VAD model for Qwen3-ASR utterance mode\n"
+              << "      --tts-model PATH\n"
+              << "                      enable native CosyVoice3 TTS with the LLM GGUF\n"
+              << "      --tts-flow-model PATH\n"
+              << "                      optional CosyVoice3 flow GGUF path\n"
+              << "      --tts-hift-model PATH\n"
+              << "                      optional CosyVoice3 HiFT vocoder GGUF path\n"
+              << "      --tts-voices-model PATH\n"
+              << "                      optional CosyVoice3 baked voices GGUF path\n"
+              << "      --tts-voice NAME\n"
+              << "                      CosyVoice3 baked voice name; default zero_shot\n"
+              << "      --tts-output-dir DIR\n"
+              << "                      directory for synthesized wav files; default tts-output\n"
+              << "      --tts-threads N\n"
+              << "                      TTS CPU threads; default ASR thread count\n"
+              << "      --tts-temperature N\n"
+              << "                      TTS speech-token sampling temperature; default 0.8\n"
+              << "      --tts-seed N\n"
+              << "                      TTS speech-token RNG seed; default 42\n"
+              << "      --tts-max-tokens N\n"
+              << "                      TTS speech-token decode cap; default model runtime value\n"
+              << "      --tts-play\n"
+              << "                      play each synthesized wav after generation\n"
+              << "      --tts-play-command PATH\n"
+              << "                      player command for --tts-play; default afplay on macOS, aplay elsewhere\n"
+              << "      --tts-partials\n"
+              << "                      synthesize partial updates too; default final translations only\n"
               << "  -c, --capture ID    capture device index, or -1 for system default\n"
               << "      --step MS       audio step size in milliseconds\n"
               << "      --length MS     audio window size in milliseconds\n"
@@ -448,11 +548,92 @@ int main(int argc, char ** argv) {
         }
 
         std::mutex output_mutex;
+        std::unique_ptr<vox::pipeline::AsyncTextToSpeech> tts;
+        std::string tts_model_path;
+        std::string tts_flow_model_path;
+        std::string tts_hift_model_path;
+        std::string tts_voices_model_path;
+        std::string tts_output_dir;
         std::unique_ptr<vox::pipeline::AsyncTranscriptTranslator> translator;
         const int32_t final_silence_steps =
             std::max(cli.final_silence_steps, cli.final_only ? int32_t{1} : int32_t{0});
         const float whisper_no_speech_threshold =
             cli.no_speech_threshold >= 0.0f ? cli.no_speech_threshold : 0.95f;
+
+        if (!cli.tts_model_path.empty()) {
+            tts_model_path = resolve_model_path(cli.tts_model_path);
+            if (!file_exists(tts_model_path)) {
+                std::cerr << "Missing TTS model: " << tts_model_path << "\n"
+                          << "Download: scripts/download-cosyvoice3-tts-gguf.sh\n";
+                return 1;
+            }
+
+            if (!cli.tts_flow_model_path.empty()) {
+                tts_flow_model_path = resolve_model_path(cli.tts_flow_model_path);
+                if (!file_exists(tts_flow_model_path)) {
+                    std::cerr << "Missing TTS flow model: " << tts_flow_model_path << "\n";
+                    return 1;
+                }
+            }
+            if (!cli.tts_hift_model_path.empty()) {
+                tts_hift_model_path = resolve_model_path(cli.tts_hift_model_path);
+                if (!file_exists(tts_hift_model_path)) {
+                    std::cerr << "Missing TTS HiFT model: " << tts_hift_model_path << "\n";
+                    return 1;
+                }
+            }
+            if (!cli.tts_voices_model_path.empty()) {
+                tts_voices_model_path = resolve_model_path(cli.tts_voices_model_path);
+                if (!file_exists(tts_voices_model_path)) {
+                    std::cerr << "Missing TTS voices model: " << tts_voices_model_path << "\n";
+                    return 1;
+                }
+            }
+
+            tts_output_dir = cli.tts_output_dir;
+            vox::tts::CosyVoice3TtsConfig tts_config;
+            tts_config.model_path = tts_model_path;
+            tts_config.flow_model_path = tts_flow_model_path;
+            tts_config.hift_model_path = tts_hift_model_path;
+            tts_config.voices_model_path = tts_voices_model_path;
+            tts_config.voice = cli.tts_voice;
+            tts_config.output_dir = tts_output_dir;
+            tts_config.threads = cli.tts_threads > 0 ? cli.tts_threads : common_config.threads;
+            tts_config.max_tokens = cli.tts_max_tokens;
+            tts_config.temperature = cli.tts_temperature;
+            tts_config.seed = cli.tts_seed;
+            tts_config.use_gpu = common_config.use_gpu;
+            tts_config.flash_attention = common_config.flash_attention;
+            tts_config.play_after_synthesis = cli.tts_play;
+            tts_config.play_command = cli.tts_play_command;
+
+            tts = std::make_unique<vox::pipeline::AsyncTextToSpeech>(
+                std::move(tts_config),
+                [&output_mutex](vox::pipeline::TextToSpeechResult result) {
+                    std::lock_guard<std::mutex> lock(output_mutex);
+                    if (!result.error.empty()) {
+                        std::cerr << "[" << result.request.chunk_index
+                                  << "] tts failed: " << result.error << "\n";
+                        return;
+                    }
+                    std::cout << "[" << result.request.chunk_index << "] "
+                              << (result.request.is_final ? "tts final: " : "tts: ")
+                              << result.output_path << "\n";
+                    std::cout.flush();
+                });
+        }
+
+        const auto submit_tts =
+            [&tts, &cli](uint64_t chunk_index, const std::string & text, bool is_final) {
+            if (!tts || text.empty()) {
+                return;
+            }
+            if (!is_final && !cli.tts_partials) {
+                return;
+            }
+            tts->submit({chunk_index, text, is_final});
+        };
+
         if (!translation_model_path.empty()) {
             vox::translate::LlamaTranslatorConfig translate_config;
             translate_config.model_path = translation_model_path;
@@ -463,17 +644,21 @@ int main(int argc, char ** argv) {
 
             translator = std::make_unique<vox::pipeline::AsyncTranscriptTranslator>(
                 std::move(translate_config),
-                [&output_mutex](vox::pipeline::TranslationResult result) {
-                    std::lock_guard<std::mutex> lock(output_mutex);
+                [&output_mutex, submit_tts](vox::pipeline::TranslationResult result) {
                     if (!result.error.empty()) {
+                        std::lock_guard<std::mutex> lock(output_mutex);
                         std::cerr << "[" << result.transcript.chunk_index
                                   << "] translation failed: " << result.error << "\n";
                         return;
                     }
-                    std::cout << "[" << result.transcript.chunk_index << "] "
-                              << (result.transcript.is_final ? "translation final: " : "translation: ")
-                              << result.translation << "\n";
-                    std::cout.flush();
+                    {
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        std::cout << "[" << result.transcript.chunk_index << "] "
+                                  << (result.transcript.is_final ? "translation final: " : "translation: ")
+                                  << result.translation << "\n";
+                        std::cout.flush();
+                    }
+                    submit_tts(result.transcript.chunk_index, result.translation, result.transcript.is_final);
                 });
         }
 
@@ -575,11 +760,31 @@ int main(int argc, char ** argv) {
             if (translator) {
                 std::cout << " translation_model=" << translation_model_path;
             }
+            if (tts) {
+                std::cout << " tts_model=" << tts_model_path
+                          << " tts_voice=" << cli.tts_voice
+                          << " tts_output_dir=" << tts_output_dir
+                          << " tts_threads=" << (cli.tts_threads > 0 ? cli.tts_threads : common_config.threads)
+                          << " tts_temperature=" << cli.tts_temperature
+                          << " tts_seed=" << cli.tts_seed
+                          << " tts_max_tokens=" << cli.tts_max_tokens
+                          << " tts_partials=" << cli.tts_partials
+                          << " tts_play=" << cli.tts_play;
+                if (!tts_flow_model_path.empty()) {
+                    std::cout << " tts_flow_model=" << tts_flow_model_path;
+                }
+                if (!tts_hift_model_path.empty()) {
+                    std::cout << " tts_hift_model=" << tts_hift_model_path;
+                }
+                if (!tts_voices_model_path.empty()) {
+                    std::cout << " tts_voices_model=" << tts_voices_model_path;
+                }
+            }
             std::cout << "\n";
         }
 
         const auto handle_transcripts =
-            [&output_mutex, &translator](const std::vector<vox::asr::Transcript> & transcripts) {
+            [&output_mutex, &translator, &submit_tts](const std::vector<vox::asr::Transcript> & transcripts) {
             for (const vox::asr::Transcript & transcript : transcripts) {
                 {
                     std::lock_guard<std::mutex> lock(output_mutex);
@@ -590,6 +795,8 @@ int main(int argc, char ** argv) {
                 }
                 if (translator) {
                     translator->submit(transcript);
+                } else {
+                    submit_tts(transcript.chunk_index, transcript.text, transcript.is_final);
                 }
             }
         };
@@ -691,6 +898,9 @@ int main(int argc, char ** argv) {
         }
         if (translator) {
             translator->close();
+        }
+        if (tts) {
+            tts->close();
         }
     } catch (const std::exception & error) {
         std::cerr << "vox failed: " << error.what() << "\n";

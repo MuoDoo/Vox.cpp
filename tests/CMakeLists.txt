@@ -68,6 +68,17 @@ target_link_libraries(vox_translation_pipeline_test
 
 add_test(NAME vox_translation_pipeline_test COMMAND vox_translation_pipeline_test)
 
+add_executable(vox_tts_wav_writer_test
+    tts_wav_writer_test.cpp
+)
+
+target_link_libraries(vox_tts_wav_writer_test
+    PRIVATE
+        vox_tts
+)
+
+add_test(NAME vox_tts_wav_writer_test COMMAND vox_tts_wav_writer_test)
+
 add_executable(vox_asr_translate_jfk_test
     asr_translate_jfk_test.cpp
 )
