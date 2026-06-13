@@ -45,6 +45,7 @@ download_one() {
   local filename="$1"
   local url="https://huggingface.co/${repo_id}/resolve/main/${filename}"
   local target="${output_dir}/${filename}"
+  local partial="${target}.part"
 
   if [[ -f "$target" ]]; then
     echo "File already exists: $target"
@@ -55,13 +56,15 @@ download_one() {
   echo "Target: $target"
 
   if command -v curl >/dev/null 2>&1; then
-    curl -L --fail --continue-at - --output "$target" "$url"
+    curl -L --fail --continue-at - --output "$partial" "$url"
   elif command -v wget >/dev/null 2>&1; then
-    wget -c -O "$target" "$url"
+    wget -c -O "$partial" "$url"
   else
     echo "Missing curl or wget." >&2
     exit 1
   fi
+
+  mv -f "$partial" "$target"
 }
 
 download_one "cosyvoice3-llm-${llm_quant}.gguf"
