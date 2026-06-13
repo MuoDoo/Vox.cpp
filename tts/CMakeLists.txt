@@ -32,6 +32,10 @@ target_link_libraries(vox_tts
         Threads::Threads
 )
 
+if(WIN32)
+    target_compile_definitions(vox_tts PRIVATE _USE_MATH_DEFINES NOMINMAX)
+endif()
+
 if(TARGET ggml-metal)
     target_link_libraries(vox_tts PUBLIC ggml-metal)
 endif()
