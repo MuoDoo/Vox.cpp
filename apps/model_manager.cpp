@@ -72,7 +72,15 @@ int run_download_command(const ManagedModel & model, const std::filesystem::path
         return 1;
     }
     const int result = std::system(model.download_command.c_str());
-    std::filesystem::current_path(previous, ec);
+    std::error_code restore_ec;
+    std::filesystem::current_path(previous, restore_ec);
+    if (restore_ec) {
+        err << "Could not restore working directory " << previous << ": " << restore_ec.message() << "\n";
+        if (result != 0) {
+            err << "Download command failed for " << model.name << ".\n";
+        }
+        return 1;
+    }
     if (result != 0) {
         err << "Download command failed for " << model.name << ".\n";
         return 1;
@@ -238,7 +246,7 @@ int run_model_command(
         installed_only = args.size() == 2;
         for (const ManagedModel & model : supported_models()) {
             const ManagedModelStatus status = inspect_model(model, project_root);
-            if (installed_only && !status.complete) {
+            if (installed_only && !status.installed && !status.has_partial_download) {
                 continue;
             }
             out << model.name << "\t" << status_name(status) << "\t" << model.version << "\t";

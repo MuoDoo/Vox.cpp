@@ -1,9 +1,11 @@
 #include "model_manager.h"
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string>
 
 namespace {
 
@@ -21,7 +23,8 @@ int main() {
     namespace fs = std::filesystem;
 
     bool ok = true;
-    const fs::path root = fs::temp_directory_path() / "vox_model_manager_test";
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path root = fs::temp_directory_path() / ("vox_model_manager_test_" + std::to_string(now));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "models", ec);
@@ -43,6 +46,12 @@ int main() {
     status = vox::app::model::inspect_model(*model, root);
     ok = expect(status.installed && !status.complete, "empty model file should be incomplete") && ok;
 
+    std::ostringstream out;
+    std::ostringstream err;
+    int result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    ok = expect(result == 0, "list --installed should succeed for incomplete models") && ok;
+    ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include incomplete model") && ok;
+
     {
         std::ofstream file(model_path, std::ios::binary);
         file << "not a real model, but enough to test file completeness";
@@ -50,9 +59,11 @@ int main() {
     status = vox::app::model::inspect_model(*model, root);
     ok = expect(status.installed && status.complete, "non-empty model file should be complete") && ok;
 
-    std::ostringstream out;
-    std::ostringstream err;
-    int result = vox::app::model::run_model_command({"verify", "whisper-base"}, root, out, err);
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "whisper-base"}, root, out, err);
     ok = expect(result == 0, "verify should succeed for a complete local model") && ok;
     ok = expect(out.str().find("checksum: unavailable") != std::string::npos, "verify should show checksum status") && ok;
 
@@ -71,6 +82,20 @@ int main() {
     result = vox::app::model::run_model_command({"remove", "whisper-base"}, root, out, err);
     ok = expect(result == 0, "remove should succeed") && ok;
     ok = expect(!fs::exists(model_path), "remove should delete model file") && ok;
+
+    {
+        std::ofstream partial(model_path.string() + ".part", std::ios::binary);
+        partial << "partial";
+    }
+    status = vox::app::model::inspect_model(*model, root);
+    ok = expect(!status.installed && status.has_partial_download && !status.complete, "partial download should be incomplete") && ok;
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    ok = expect(result == 0, "list --installed should succeed for partial downloads") && ok;
+    ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include partial download") && ok;
 
     fs::remove_all(root, ec);
     return ok ? 0 : 1;
