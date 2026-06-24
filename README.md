@@ -57,6 +57,19 @@ cmake --build build --target vox -j
 
 ## Model
 
+The `vox` CLI can list, download, verify, repair, and remove known local models:
+
+```sh
+./build/bin/vox model list
+./build/bin/vox model download qwen3-asr-1.7b
+./build/bin/vox model verify qwen3-asr-1.7b
+./build/bin/vox model repair qwen3-asr-1.7b
+```
+
+Model verification checks that expected files exist, are non-empty, and do not
+have leftover partial downloads. Checksums are reported when metadata is
+available; the current bundled manifests rely on file presence and size.
+
 ### Whisper ASR
 
 Download or place a local Whisper GGML model under `models/`. For multilingual recognition, use a non-`.en` model.

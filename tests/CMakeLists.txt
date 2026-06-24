@@ -27,6 +27,17 @@ target_link_libraries(vox_qwen_asr_config_test
 
 add_test(NAME vox_qwen_asr_config_test COMMAND vox_qwen_asr_config_test)
 
+add_executable(vox_model_manager_test
+    model_manager_test.cpp
+)
+
+target_link_libraries(vox_model_manager_test
+    PRIVATE
+        vox_model_manager
+)
+
+add_test(NAME vox_model_manager_test COMMAND vox_model_manager_test)
+
 add_executable(vox_qwen_asr_smoke_test
     qwen_asr_smoke_test.cpp
 )

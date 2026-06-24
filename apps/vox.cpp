@@ -2,6 +2,7 @@
 #include "async_text_to_speech.h"
 #include "async_audio_player.h"
 #include "microphone_audio_source.h"
+#include "model_manager.h"
 #include "streaming_qwen_asr.h"
 #include "streaming_whisper.h"
 
@@ -453,6 +454,10 @@ CliOptions parse_cli(int argc, char ** argv) {
 
 void print_usage(const char * program) {
     std::cout << "usage: " << program << " [options] [asr_model] [language] [translation_model] [target_language]\n"
+              << "       " << program << " model <command> [model-name]\n"
+              << "\n"
+              << "commands:\n"
+              << "      model           list, download, verify, repair, or remove local models\n"
               << "\n"
               << "options:\n"
               << "      --asr-engine NAME\n"
@@ -574,6 +579,14 @@ int main(int argc, char ** argv) {
     std::signal(SIGTERM, stop);
 
     try {
+        if (argc >= 2 && std::string(argv[1]) == "model") {
+            std::vector<std::string> args;
+            for (int i = 2; i < argc; ++i) {
+                args.push_back(argv[i]);
+            }
+            return vox::app::model::run_model_command(args, VOX_PROJECT_ROOT, std::cout, std::cerr);
+        }
+
         const CliOptions cli = parse_cli(argc, argv);
         if (cli.show_help) {
             print_usage(argv[0]);
