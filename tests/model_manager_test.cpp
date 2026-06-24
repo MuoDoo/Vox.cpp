@@ -97,6 +97,22 @@ int main() {
     ok = expect(result == 0, "list --installed should succeed for partial downloads") && ok;
     ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include partial download") && ok;
 
+    {
+        std::ofstream file(model_path, std::ios::binary);
+        file << "not a real model, but enough to test file completeness";
+    }
+    const fs::path partial_path = model_path.string() + ".part";
+    ok = expect(fs::exists(partial_path), "stale .part file should exist before repair") && ok;
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"repair", "whisper-base"}, root, out, err);
+    ok = expect(result == 0, "repair should succeed when model is already complete") && ok;
+    ok = expect(!fs::exists(partial_path), "repair should remove stale .part file") && ok;
+    ok = expect(fs::exists(model_path), "repair should keep the complete model file") && ok;
+    ok = expect(out.str().find("Model already installed") != std::string::npos, "repair should report model already installed") && ok;
+
     fs::remove_all(root, ec);
     return ok ? 0 : 1;
 }
