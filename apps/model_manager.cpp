@@ -2,7 +2,6 @@
 
 #include <cstdlib>
 #include <cstdio>
-#include <fstream>
 #include <iostream>
 #include <iterator>
 #include <system_error>
@@ -322,7 +321,18 @@ int run_model_command(
         return 0;
     }
     out << "Downloading " << model->name << " using: " << model->download_command << "\n";
-    return run_download_command(*model, project_root, err);
+    const int download_result = run_download_command(*model, project_root, err);
+    if (download_result != 0) {
+        return download_result;
+    }
+    const ManagedModelStatus after = inspect_model(*model, project_root);
+    if (!after.complete) {
+        err << "Model is still incomplete after download: " << model->name
+            << " (" << status_name(after) << "). Run 'vox model repair " << model->name << "'.\n";
+        return 1;
+    }
+    out << "Model installed: " << model->name << "\n";
+    return 0;
 }
 
 } // namespace vox::app::model
