@@ -276,6 +276,17 @@ To play each generated wav after synthesis on macOS:
 
 By default, TTS only synthesizes final translations to avoid overlapping partial speech. Use `--tts-partials` for lower latency experiments.
 
+TTS synthesis on CPU is dominated by the flow-matching stage. `--tts-flow-steps N` lowers the CFM Euler step count from the model default (10) to trade audio quality for speed; 5-6 steps is usually a good compromise:
+
+```sh
+./build/bin/vox --final-only --tts-play --tts-flow-steps 5 \
+  --tts-model models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
 The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr`; SDL microphone capture is an app-layer adapter. The reusable scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator` and `vox::pipeline::AsyncTextToSpeech`.
 
 ## ASR Stream API

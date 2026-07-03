@@ -6,4 +6,4 @@
 	url = https://github.com/ggml-org/llama.cpp.git
 [submodule "external/CrispASR"]
 	path = external/CrispASR
-	url = https://github.com/CrispStrobe/CrispASR.git
+	url = https://github.com/MuoDoo/CrispASR.git

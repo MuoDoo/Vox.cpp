@@ -50,6 +50,7 @@ struct CliOptions {
     int32_t vad_max_speech_ms = 0;
     int32_t tts_threads = 0;
     int32_t tts_max_tokens = 0;
+    int32_t tts_flow_steps = 0;
     float rms_threshold = -1.0f;
     float no_speech_threshold = -1.0f;
     float vad_threshold = -1.0f;
@@ -229,6 +230,9 @@ CliOptions parse_cli(int argc, char ** argv) {
         } else if (arg == "--tts-max-tokens" || arg.rfind("--tts-max-tokens=", 0) == 0) {
             options.tts_max_tokens =
                 parse_i32(option_value(arg, "--tts-max-tokens", i, argc, argv), "--tts-max-tokens");
+        } else if (arg == "--tts-flow-steps" || arg.rfind("--tts-flow-steps=", 0) == 0) {
+            options.tts_flow_steps =
+                parse_i32(option_value(arg, "--tts-flow-steps", i, argc, argv), "--tts-flow-steps");
         } else if (arg == "--tts-temperature" || arg.rfind("--tts-temperature=", 0) == 0) {
             options.tts_temperature =
                 parse_float(option_value(arg, "--tts-temperature", i, argc, argv), "--tts-temperature");
@@ -337,6 +341,9 @@ CliOptions parse_cli(int argc, char ** argv) {
         if (options.tts_max_tokens < 0) {
             throw std::runtime_error("TTS max tokens must be non-negative");
         }
+        if (options.tts_flow_steps < 0) {
+            throw std::runtime_error("TTS flow steps must be non-negative");
+        }
         if (options.tts_temperature < 0.0f) {
             throw std::runtime_error("TTS temperature must be non-negative");
         }
@@ -375,6 +382,8 @@ void print_usage(const char * program) {
               << "                      TTS speech-token RNG seed; default 42\n"
               << "      --tts-max-tokens N\n"
               << "                      TTS speech-token decode cap; default model runtime value\n"
+              << "      --tts-flow-steps N\n"
+              << "                      CFM flow Euler steps; default model value (10); fewer = faster, lower quality\n"
               << "      --tts-play\n"
               << "                      play each synthesized wav after generation\n"
               << "      --tts-play-command PATH\n"
@@ -602,6 +611,7 @@ int main(int argc, char ** argv) {
             tts_config.output_dir = tts_output_dir;
             tts_config.threads = cli.tts_threads > 0 ? cli.tts_threads : common_config.threads;
             tts_config.max_tokens = cli.tts_max_tokens;
+            tts_config.flow_steps = cli.tts_flow_steps;
             tts_config.temperature = cli.tts_temperature;
             tts_config.seed = cli.tts_seed;
             tts_config.use_gpu = common_config.use_gpu;
@@ -791,6 +801,7 @@ int main(int argc, char ** argv) {
                           << " tts_temperature=" << cli.tts_temperature
                           << " tts_seed=" << cli.tts_seed
                           << " tts_max_tokens=" << cli.tts_max_tokens
+                          << " tts_flow_steps=" << (cli.tts_flow_steps > 0 ? std::to_string(cli.tts_flow_steps) : std::string("default"))
                           << " tts_partials=" << cli.tts_partials
                           << " tts_play=" << cli.tts_play;
                 if (!tts_flow_model_path.empty()) {
