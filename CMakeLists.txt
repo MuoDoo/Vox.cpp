@@ -123,7 +123,7 @@ add_subdirectory(asr)
 add_subdirectory(translate)
 add_subdirectory(tts)
 add_subdirectory(pipeline)
-if(VOX_BUILD_APPS)
+if(VOX_BUILD_APPS OR VOX_BUILD_TESTS)
     add_subdirectory(apps)
 endif()
 

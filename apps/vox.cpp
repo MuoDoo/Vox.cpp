@@ -2,6 +2,7 @@
 #include "async_text_to_speech.h"
 #include "async_audio_player.h"
 #include "microphone_audio_source.h"
+#include "model_manager.h"
 #include "streaming_qwen_asr.h"
 #include "streaming_whisper.h"
 
@@ -174,16 +175,16 @@ const char * tts_engine_name(TtsEngine engine) {
     return "unknown";
 }
 
-const char * tts_download_script(TtsEngine engine) {
+const char * tts_model_manager_name(TtsEngine engine) {
     switch (engine) {
     case TtsEngine::CosyVoice3:
-        return "scripts/download-cosyvoice3-tts-gguf.sh";
+        return "cosyvoice3-tts";
     case TtsEngine::Kokoro:
-        return "scripts/download-kokoro-tts-gguf.sh";
+        return "kokoro-tts";
     case TtsEngine::Qwen3Tts:
-        return "scripts/download-qwen3-tts-gguf.sh";
+        return "qwen3-tts-0.6b-customvoice";
     }
-    return "scripts/download-cosyvoice3-tts-gguf.sh";
+    return "cosyvoice3-tts";
 }
 
 std::string default_tts_language(const CliOptions & options,
@@ -453,6 +454,10 @@ CliOptions parse_cli(int argc, char ** argv) {
 
 void print_usage(const char * program) {
     std::cout << "usage: " << program << " [options] [asr_model] [language] [translation_model] [target_language]\n"
+              << "       " << program << " model <command> [model-name]\n"
+              << "\n"
+              << "commands:\n"
+              << "      model           list, download, verify, repair, or remove local models\n"
               << "\n"
               << "options:\n"
               << "      --asr-engine NAME\n"
@@ -574,6 +579,14 @@ int main(int argc, char ** argv) {
     std::signal(SIGTERM, stop);
 
     try {
+        if (argc >= 2 && std::string(argv[1]) == "model") {
+            std::vector<std::string> args;
+            for (int i = 2; i < argc; ++i) {
+                args.push_back(argv[i]);
+            }
+            return vox::app::model::run_model_command(args, VOX_PROJECT_ROOT, std::cout, std::cerr);
+        }
+
         const CliOptions cli = parse_cli(argc, argv);
         if (cli.show_help) {
             print_usage(argv[0]);
@@ -625,9 +638,9 @@ int main(int argc, char ** argv) {
         if (!file_exists(common_config.model_path)) {
             std::cerr << "Missing ASR model: " << common_config.model_path << "\n";
             if (asr_engine == AsrEngine::Whisper) {
-                std::cerr << "Download: ./external/whisper.cpp/models/download-ggml-model.sh base models\n";
+                std::cerr << "Download: vox model download whisper-base\n";
             } else {
-                std::cerr << "Download: scripts/download-qwen3-asr-gguf.sh\n";
+                std::cerr << "Download: vox model download qwen3-asr-1.7b\n";
             }
             return 1;
         }
@@ -638,7 +651,7 @@ int main(int argc, char ** argv) {
                 !cli.asr_mmproj_path.empty() ? cli.asr_mmproj_path : default_qwen_mmproj);
             if (!file_exists(qwen_mmproj_path)) {
                 std::cerr << "Missing Qwen3-ASR mmproj: " << qwen_mmproj_path << "\n"
-                          << "Download: scripts/download-qwen3-asr-gguf.sh\n";
+                          << "Download: vox model download qwen3-asr-1.7b\n";
                 return 1;
             }
         }
@@ -669,7 +682,7 @@ int main(int argc, char ** argv) {
             cli.positional.size() > 2 ? resolve_model_path(cli.positional[2]) : std::string();
         if (!translation_model_path.empty() && !file_exists(translation_model_path)) {
             std::cerr << "Missing translation model: " << translation_model_path << "\n"
-                      << "Download: scripts/download-hymt-gguf.sh\n";
+                      << "Download: vox model download hymt-translate\n";
             return 1;
         }
 
@@ -694,7 +707,7 @@ int main(int argc, char ** argv) {
             tts_model_path = resolve_model_path(cli.tts_model_path);
             if (!file_exists(tts_model_path)) {
                 std::cerr << "Missing TTS model: " << tts_model_path << "\n"
-                          << "Download: " << tts_download_script(tts_engine) << "\n";
+                          << "Download: vox model download " << tts_model_manager_name(tts_engine) << "\n";
                 return 1;
             }
 

@@ -57,6 +57,23 @@ cmake --build build --target vox -j
 
 ## Model
 
+The `vox` CLI can list, download, verify, repair, and remove known local models:
+
+```sh
+./build/bin/vox model list
+./build/bin/vox model download qwen3-asr-1.7b
+./build/bin/vox model download kokoro-tts
+./build/bin/vox model download qwen3-tts
+./build/bin/vox model verify qwen3-asr-1.7b
+./build/bin/vox model repair qwen3-asr-1.7b
+```
+
+Model verification checks that expected files exist, are non-empty, and do not
+have leftover partial downloads. Checksums are reported when metadata is
+available; the current bundled manifests rely on file presence and size. Common
+aliases such as `kokoro`, `cosyvoice`, and `qwen3-tts` resolve to their
+canonical model entries.
+
 ### Whisper ASR
 
 Download or place a local Whisper GGML model under `models/`. For multilingual recognition, use a non-`.en` model.
@@ -129,7 +146,7 @@ CosyVoice3 remains the default TTS engine.
 Download the minimum baked-voice CosyVoice3 GGUF set:
 
 ```sh
-scripts/download-cosyvoice3-tts-gguf.sh
+./build/bin/vox model download cosyvoice3-tts
 ```
 
 That creates:
@@ -146,7 +163,7 @@ Pass the LLM GGUF with `--tts-model`. The runtime auto-discovers sibling flow, H
 Kokoro-82M is available with `--tts-engine kokoro`:
 
 ```sh
-scripts/download-kokoro-tts-gguf.sh
+./build/bin/vox model download kokoro-tts
 ```
 
 On Windows PowerShell:
@@ -167,7 +184,7 @@ Pass the Kokoro model with `--tts-model`. The runtime auto-discovers `kokoro-voi
 Qwen3-TTS 0.6B is available with `--tts-engine qwen3-tts`. The recommended quick-test path is CustomVoice Q8_0 because it has built-in speakers and does not need a reference WAV:
 
 ```sh
-scripts/download-qwen3-tts-gguf.sh
+./build/bin/vox model download qwen3-tts
 ```
 
 On Windows PowerShell:
@@ -183,7 +200,7 @@ models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf
 models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-tokenizer-12hz.gguf
 ```
 
-Pass the talker GGUF with `--tts-model`. The runtime auto-discovers `qwen3-tts-tokenizer-12hz.gguf` in the same directory, or use `--tts-codec-model PATH`. CustomVoice speakers include `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`, `uncle_fu`, and `vivian`; use `dylan` or `eric` for Chinese output tests. The Base variant can also be downloaded with `scripts/download-qwen3-tts-gguf.sh models/tts/qwen3-tts-0.6b-base base q8_0`; it requires `--tts-voice-model` pointing to a baked voice GGUF or a reference WAV plus `--tts-ref-text`.
+Pass the talker GGUF with `--tts-model`. The runtime auto-discovers `qwen3-tts-tokenizer-12hz.gguf` in the same directory, or use `--tts-codec-model PATH`. CustomVoice speakers include `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`, `uncle_fu`, and `vivian`; use `dylan` or `eric` for Chinese output tests. The Base variant can also be downloaded with `./build/bin/vox model download qwen3-tts-0.6b-base`; it requires `--tts-voice-model` pointing to a baked voice GGUF or a reference WAV plus `--tts-ref-text`.
 
 ## Run
 

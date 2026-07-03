@@ -1,0 +1,157 @@
+#include "model_manager.h"
+
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <string>
+
+namespace {
+
+bool expect(bool condition, const std::string & message) {
+    if (!condition) {
+        std::cerr << message << "\n";
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
+int main() {
+    namespace fs = std::filesystem;
+
+    bool ok = true;
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    const fs::path root = fs::temp_directory_path() / ("vox_model_manager_test_" + std::to_string(now));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "models", ec);
+
+    const vox::app::model::ManagedModel * model = vox::app::model::find_model("whisper-base");
+    ok = expect(model != nullptr, "whisper-base should be supported") && ok;
+    const vox::app::model::ManagedModel * kokoro = vox::app::model::find_model("kokoro");
+    ok = expect(kokoro != nullptr && kokoro->name == "kokoro-tts", "kokoro alias should resolve") && ok;
+    const vox::app::model::ManagedModel * qwen3_tts = vox::app::model::find_model("qwen3-tts");
+    ok = expect(qwen3_tts != nullptr && qwen3_tts->name == "qwen3-tts-0.6b-customvoice",
+                "qwen3-tts alias should resolve to CustomVoice") &&
+         ok;
+    ok = expect(vox::app::model::find_model("missing-model") == nullptr, "unknown model should not resolve") && ok;
+    if (!model) {
+        return 1;
+    }
+
+    vox::app::model::ManagedModelStatus status = vox::app::model::inspect_model(*model, root);
+    ok = expect(!status.installed && !status.complete, "missing model should not be complete") && ok;
+
+    const fs::path model_path = root / "models/ggml-base.bin";
+    {
+        std::ofstream empty(model_path, std::ios::binary);
+    }
+    status = vox::app::model::inspect_model(*model, root);
+    ok = expect(status.installed && !status.complete, "empty model file should be incomplete") && ok;
+
+    std::ostringstream out;
+    std::ostringstream err;
+    int result = vox::app::model::run_model_command({"list"}, root, out, err);
+    ok = expect(result == 0, "list should succeed") && ok;
+    ok = expect(out.str().find("kokoro-tts") != std::string::npos, "list should include Kokoro") && ok;
+    ok = expect(out.str().find("qwen3-tts-0.6b-customvoice") != std::string::npos,
+                "list should include Qwen3-TTS CustomVoice") &&
+         ok;
+    ok = expect(out.str().find("qwen3-tts-0.6b-base") != std::string::npos, "list should include Qwen3-TTS Base") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "kokoro"}, root, out, err);
+    ok = expect(result == 1, "verify should fail for missing Kokoro files") && ok;
+    ok = expect(out.str().find("kokoro-tts (missing)") != std::string::npos,
+                "verify should print canonical Kokoro model details") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "qwen3-tts-custom"}, root, out, err);
+    ok = expect(result == 1, "unknown similar model should fail") && ok;
+    ok = expect(err.str().find("Did you mean: qwen3-tts-0.6b-customvoice") != std::string::npos,
+                "unknown model should include suggestions") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    ok = expect(result == 0, "list --installed should succeed for incomplete models") && ok;
+    ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include incomplete model") && ok;
+
+    {
+        std::ofstream file(model_path, std::ios::binary);
+        file << "not a real model, but enough to test file completeness";
+    }
+    status = vox::app::model::inspect_model(*model, root);
+    ok = expect(status.installed && status.complete, "non-empty model file should be complete") && ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "whisper-base"}, root, out, err);
+    ok = expect(result == 0, "verify should succeed for a complete local model") && ok;
+    ok = expect(out.str().find("checksum: unavailable") != std::string::npos, "verify should show checksum status") && ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    ok = expect(result == 0, "list --installed should succeed") && ok;
+    ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include complete model") && ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"remove", "whisper-base"}, root, out, err);
+    ok = expect(result == 0, "remove should succeed") && ok;
+    ok = expect(!fs::exists(model_path), "remove should delete model file") && ok;
+
+    {
+        std::ofstream partial(model_path.string() + ".part", std::ios::binary);
+        partial << "partial";
+    }
+    status = vox::app::model::inspect_model(*model, root);
+    ok = expect(!status.installed && status.has_partial_download && !status.complete, "partial download should be incomplete") && ok;
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    ok = expect(result == 0, "list --installed should succeed for partial downloads") && ok;
+    ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include partial download") && ok;
+
+    {
+        std::ofstream file(model_path, std::ios::binary);
+        file << "not a real model, but enough to test file completeness";
+    }
+    const fs::path partial_path = model_path.string() + ".part";
+    ok = expect(fs::exists(partial_path), "stale .part file should exist before repair") && ok;
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"repair", "whisper-base"}, root, out, err);
+    ok = expect(result == 0, "repair should succeed when model is already complete") && ok;
+    ok = expect(!fs::exists(partial_path), "repair should remove stale .part file") && ok;
+    ok = expect(fs::exists(model_path), "repair should keep the complete model file") && ok;
+    ok = expect(out.str().find("Model already installed") != std::string::npos, "repair should report model already installed") && ok;
+
+    fs::remove_all(root, ec);
+    return ok ? 0 : 1;
+}
