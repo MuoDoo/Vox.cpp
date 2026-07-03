@@ -21,6 +21,7 @@ struct ManagedModel {
     std::string checksum;
     std::vector<ManagedModelFile> files;
     std::string download_command;
+    std::vector<std::string> aliases;
 };
 
 struct ManagedModelFileStatus {

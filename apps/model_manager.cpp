@@ -1,5 +1,6 @@
 #include "model_manager.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 #include <iostream>
@@ -93,6 +94,13 @@ void print_model_details(const ManagedModel & model, const ManagedModelStatus & 
         << "  source: " << model.source << "\n"
         << "  version: " << model.version << "\n"
         << "  checksum: " << (model.checksum.empty() ? "unavailable" : model.checksum) << "\n";
+    if (!model.aliases.empty()) {
+        out << "  aliases:";
+        for (const std::string & alias : model.aliases) {
+            out << " " << alias;
+        }
+        out << "\n";
+    }
     for (size_t i = 0; i < model.files.size(); ++i) {
         const ManagedModelFile & file = model.files[i];
         const ManagedModelFileStatus & file_status = status.files[i];
@@ -122,6 +130,42 @@ int require_model_name(const std::vector<std::string> & args, std::ostream & err
     return 0;
 }
 
+bool name_matches_model(const ManagedModel & model, const std::string & name) {
+    if (model.name == name) {
+        return true;
+    }
+    return std::find(model.aliases.begin(), model.aliases.end(), name) != model.aliases.end();
+}
+
+bool contains_token(const std::string & haystack, const std::string & needle) {
+    return !needle.empty() && haystack.find(needle) != std::string::npos;
+}
+
+void append_unique(std::vector<std::string> & values, const std::string & value) {
+    if (std::find(values.begin(), values.end(), value) == values.end()) {
+        values.push_back(value);
+    }
+}
+
+std::vector<std::string> suggest_models(const std::string & name) {
+    std::vector<std::string> suggestions;
+    for (const ManagedModel & model : supported_models()) {
+        if (contains_token(model.name, name) || contains_token(name, model.name)) {
+            append_unique(suggestions, model.name);
+        }
+        for (const std::string & alias : model.aliases) {
+            if (contains_token(alias, name) || contains_token(name, alias)) {
+                append_unique(suggestions, model.name);
+                break;
+            }
+        }
+        if (suggestions.size() >= 5) {
+            break;
+        }
+    }
+    return suggestions;
+}
+
 } // namespace
 
 const std::vector<ManagedModel> & supported_models() {
@@ -137,6 +181,7 @@ const std::vector<ManagedModel> & supported_models() {
                 {"models/asr/qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf", "about 356 MB"},
             },
             "scripts/download-qwen3-asr-gguf.sh",
+            {"qwen3-asr", "qwen3-asr-default", "default-asr"},
         },
         {
             "qwen3-asr-0.6b",
@@ -149,6 +194,7 @@ const std::vector<ManagedModel> & supported_models() {
                 {"models/asr/qwen3-asr-0.6b/mmproj-Qwen3-ASR-0.6B-Q8_0.gguf", ""},
             },
             "scripts/download-qwen3-asr-gguf.sh 0.6B Q8_0 models/asr/qwen3-asr-0.6b",
+            {"qwen3-asr-small", "small-asr"},
         },
         {
             "whisper-base",
@@ -158,6 +204,7 @@ const std::vector<ManagedModel> & supported_models() {
             "",
             {{"models/ggml-base.bin", ""}},
             "./external/whisper.cpp/models/download-ggml-model.sh base models",
+            {"whisper", "whisper.cpp"},
         },
         {
             "hymt-translate",
@@ -167,6 +214,7 @@ const std::vector<ManagedModel> & supported_models() {
             "",
             {{"models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf", "about 1.13 GB"}},
             "scripts/download-hymt-gguf.sh",
+            {"hymt", "hy-mt", "translate"},
         },
         {
             "cosyvoice3-tts",
@@ -181,6 +229,58 @@ const std::vector<ManagedModel> & supported_models() {
                 {"models/tts/cosyvoice3/cosyvoice3-voices.gguf", ""},
             },
             "scripts/download-cosyvoice3-tts-gguf.sh",
+            {"cosyvoice3", "cosyvoice", "cosy"},
+        },
+        {
+            "kokoro-tts",
+            "Kokoro-82M TTS GGUF model and default af_heart voice pack",
+            "cstr/kokoro-82m-GGUF + cstr/kokoro-voices-GGUF",
+            "82M q8_0 / af_heart",
+            "",
+            {
+                {"models/tts/kokoro/kokoro-82m-q8_0.gguf", "about 135 MiB"},
+                {"models/tts/kokoro/kokoro-voice-af_heart.gguf", "about 510 KiB"},
+            },
+#ifdef _WIN32
+            "powershell -ExecutionPolicy Bypass -File scripts/download-kokoro-tts-gguf.ps1",
+#else
+            "scripts/download-kokoro-tts-gguf.sh",
+#endif
+            {"kokoro", "kokoro-82m"},
+        },
+        {
+            "qwen3-tts-0.6b-customvoice",
+            "Qwen3-TTS 0.6B CustomVoice talker and tokenizer/codec",
+            "cstr/qwen3-tts-0.6b-customvoice-GGUF + cstr/qwen3-tts-tokenizer-12hz-GGUF",
+            "0.6B CustomVoice q8_0",
+            "",
+            {
+                {"models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf", "about 923 MiB"},
+                {"models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-tokenizer-12hz.gguf", "about 342 MiB"},
+            },
+#ifdef _WIN32
+            "powershell -ExecutionPolicy Bypass -File scripts/download-qwen3-tts-gguf.ps1",
+#else
+            "scripts/download-qwen3-tts-gguf.sh",
+#endif
+            {"qwen3-tts", "qwen3tts", "qwen3-tts-customvoice", "qwen3-tts-cv"},
+        },
+        {
+            "qwen3-tts-0.6b-base",
+            "Qwen3-TTS 0.6B Base talker and tokenizer/codec; requires a separate voice reference at runtime",
+            "cstr/qwen3-tts-0.6b-base-GGUF + cstr/qwen3-tts-tokenizer-12hz-GGUF",
+            "0.6B Base q8_0",
+            "",
+            {
+                {"models/tts/qwen3-tts-0.6b-base/qwen3-tts-12hz-0.6b-base-q8_0.gguf", ""},
+                {"models/tts/qwen3-tts-0.6b-base/qwen3-tts-tokenizer-12hz.gguf", "about 342 MiB"},
+            },
+#ifdef _WIN32
+            "powershell -ExecutionPolicy Bypass -File scripts/download-qwen3-tts-gguf.ps1 models/tts/qwen3-tts-0.6b-base base q8_0",
+#else
+            "scripts/download-qwen3-tts-gguf.sh models/tts/qwen3-tts-0.6b-base base q8_0",
+#endif
+            {"qwen3-tts-base"},
         },
     };
     return models;
@@ -188,7 +288,7 @@ const std::vector<ManagedModel> & supported_models() {
 
 const ManagedModel * find_model(const std::string & name) {
     for (const ManagedModel & model : supported_models()) {
-        if (model.name == name) {
+        if (name_matches_model(model, name)) {
             return &model;
         }
     }
@@ -268,8 +368,16 @@ int run_model_command(
 
     const ManagedModel * model = find_model(args[1]);
     if (!model) {
-        err << "Unknown model: " << args[1] << "\n"
-            << "Run 'vox model list' to see supported models.\n";
+        err << "Unknown model: " << args[1] << "\n";
+        const std::vector<std::string> suggestions = suggest_models(args[1]);
+        if (!suggestions.empty()) {
+            err << "Did you mean:";
+            for (const std::string & suggestion : suggestions) {
+                err << " " << suggestion;
+            }
+            err << "\n";
+        }
+        err << "Run 'vox model list' to see supported models.\n";
         return 1;
     }
 

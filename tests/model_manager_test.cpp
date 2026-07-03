@@ -31,6 +31,12 @@ int main() {
 
     const vox::app::model::ManagedModel * model = vox::app::model::find_model("whisper-base");
     ok = expect(model != nullptr, "whisper-base should be supported") && ok;
+    const vox::app::model::ManagedModel * kokoro = vox::app::model::find_model("kokoro");
+    ok = expect(kokoro != nullptr && kokoro->name == "kokoro-tts", "kokoro alias should resolve") && ok;
+    const vox::app::model::ManagedModel * qwen3_tts = vox::app::model::find_model("qwen3-tts");
+    ok = expect(qwen3_tts != nullptr && qwen3_tts->name == "qwen3-tts-0.6b-customvoice",
+                "qwen3-tts alias should resolve to CustomVoice") &&
+         ok;
     ok = expect(vox::app::model::find_model("missing-model") == nullptr, "unknown model should not resolve") && ok;
     if (!model) {
         return 1;
@@ -48,7 +54,40 @@ int main() {
 
     std::ostringstream out;
     std::ostringstream err;
-    int result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
+    int result = vox::app::model::run_model_command({"list"}, root, out, err);
+    ok = expect(result == 0, "list should succeed") && ok;
+    ok = expect(out.str().find("kokoro-tts") != std::string::npos, "list should include Kokoro") && ok;
+    ok = expect(out.str().find("qwen3-tts-0.6b-customvoice") != std::string::npos,
+                "list should include Qwen3-TTS CustomVoice") &&
+         ok;
+    ok = expect(out.str().find("qwen3-tts-0.6b-base") != std::string::npos, "list should include Qwen3-TTS Base") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "kokoro"}, root, out, err);
+    ok = expect(result == 1, "verify should fail for missing Kokoro files") && ok;
+    ok = expect(out.str().find("kokoro-tts (missing)") != std::string::npos,
+                "verify should print canonical Kokoro model details") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"verify", "qwen3-tts-custom"}, root, out, err);
+    ok = expect(result == 1, "unknown similar model should fail") && ok;
+    ok = expect(err.str().find("Did you mean: qwen3-tts-0.6b-customvoice") != std::string::npos,
+                "unknown model should include suggestions") &&
+         ok;
+
+    out.str("");
+    out.clear();
+    err.str("");
+    err.clear();
+    result = vox::app::model::run_model_command({"list", "--installed"}, root, out, err);
     ok = expect(result == 0, "list --installed should succeed for incomplete models") && ok;
     ok = expect(out.str().find("whisper-base") != std::string::npos, "installed list should include incomplete model") && ok;
 

@@ -175,16 +175,16 @@ const char * tts_engine_name(TtsEngine engine) {
     return "unknown";
 }
 
-const char * tts_download_script(TtsEngine engine) {
+const char * tts_model_manager_name(TtsEngine engine) {
     switch (engine) {
     case TtsEngine::CosyVoice3:
-        return "scripts/download-cosyvoice3-tts-gguf.sh";
+        return "cosyvoice3-tts";
     case TtsEngine::Kokoro:
-        return "scripts/download-kokoro-tts-gguf.sh";
+        return "kokoro-tts";
     case TtsEngine::Qwen3Tts:
-        return "scripts/download-qwen3-tts-gguf.sh";
+        return "qwen3-tts-0.6b-customvoice";
     }
-    return "scripts/download-cosyvoice3-tts-gguf.sh";
+    return "cosyvoice3-tts";
 }
 
 std::string default_tts_language(const CliOptions & options,
@@ -707,7 +707,7 @@ int main(int argc, char ** argv) {
             tts_model_path = resolve_model_path(cli.tts_model_path);
             if (!file_exists(tts_model_path)) {
                 std::cerr << "Missing TTS model: " << tts_model_path << "\n"
-                          << "Download: vox model download cosyvoice3-tts\n";
+                          << "Download: vox model download " << tts_model_manager_name(tts_engine) << "\n";
                 return 1;
             }
 
