@@ -1,6 +1,7 @@
 add_library(vox_translation_pipeline STATIC
     async_transcript_translator.cpp
     async_text_to_speech.cpp
+    async_audio_player.cpp
 )
 
 target_include_directories(vox_translation_pipeline

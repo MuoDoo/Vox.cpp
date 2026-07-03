@@ -44,6 +44,7 @@ private:
 };
 
 std::string default_tts_play_command();
+void play_audio_file(const std::string & command, const std::string & path);
 void write_wav_mono_16(const std::string & path, const float * samples, int32_t sample_count, int32_t sample_rate);
 
 } // namespace vox::tts

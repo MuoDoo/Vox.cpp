@@ -1,6 +1,7 @@
 #include "async_transcript_translator.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -105,6 +106,7 @@ private:
 
             TranslationResult result;
             result.transcript = std::move(transcript);
+            const auto start = std::chrono::steady_clock::now();
             try {
                 result.translation = translate_(result.transcript.text);
             } catch (const std::exception & error) {
@@ -112,6 +114,9 @@ private:
             } catch (...) {
                 result.error = "unknown translation error";
             }
+            result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - start)
+                                    .count();
 
             try {
                 result_handler_(std::move(result));

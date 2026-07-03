@@ -13,6 +13,7 @@ struct TranslationResult {
     vox::asr::Transcript transcript;
     std::string translation;
     std::string error;
+    int64_t elapsed_ms = 0;
 };
 
 class AsyncTranscriptTranslator {

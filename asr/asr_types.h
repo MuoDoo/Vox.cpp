@@ -12,6 +12,7 @@ struct Transcript {
     uint64_t chunk_index = 0;
     std::string text;
     bool is_final = false;
+    int64_t elapsed_ms = 0;
 };
 
 } // namespace vox::asr

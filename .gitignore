@@ -5,4 +5,5 @@ cmake-build-*/
 .idea/
 models/*
 !models/.gitkeep
+tts-output/
 .DS_Store

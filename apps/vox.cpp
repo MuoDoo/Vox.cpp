@@ -1,5 +1,6 @@
 #include "async_transcript_translator.h"
 #include "async_text_to_speech.h"
+#include "async_audio_player.h"
 #include "microphone_audio_source.h"
 #include "streaming_qwen_asr.h"
 #include "streaming_whisper.h"
@@ -549,6 +550,7 @@ int main(int argc, char ** argv) {
 
         std::mutex output_mutex;
         std::unique_ptr<vox::pipeline::AsyncTextToSpeech> tts;
+        std::unique_ptr<vox::pipeline::AsyncAudioPlayer> player;
         std::string tts_model_path;
         std::string tts_flow_model_path;
         std::string tts_hift_model_path;
@@ -604,12 +606,28 @@ int main(int argc, char ** argv) {
             tts_config.seed = cli.tts_seed;
             tts_config.use_gpu = common_config.use_gpu;
             tts_config.flash_attention = common_config.flash_attention;
-            tts_config.play_after_synthesis = cli.tts_play;
-            tts_config.play_command = cli.tts_play_command;
+            tts_config.play_after_synthesis = false;
+
+            if (cli.tts_play) {
+                const std::string play_command =
+                    cli.tts_play_command.empty() ? vox::tts::default_tts_play_command()
+                                                 : cli.tts_play_command;
+                player = std::make_unique<vox::pipeline::AsyncAudioPlayer>(
+                    [&output_mutex, play_command](const std::string & path) {
+                        const auto start = std::chrono::steady_clock::now();
+                        vox::tts::play_audio_file(play_command, path);
+                        const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                    std::chrono::steady_clock::now() - start)
+                                                    .count();
+                        std::lock_guard<std::mutex> lock(output_mutex);
+                        std::cout << "play: " << path << " (play " << elapsed_ms << " ms)\n";
+                        std::cout.flush();
+                    });
+            }
 
             tts = std::make_unique<vox::pipeline::AsyncTextToSpeech>(
                 std::move(tts_config),
-                [&output_mutex](vox::pipeline::TextToSpeechResult result) {
+                [&output_mutex, &player](vox::pipeline::TextToSpeechResult result) {
                     std::lock_guard<std::mutex> lock(output_mutex);
                     if (!result.error.empty()) {
                         std::cerr << "[" << result.request.chunk_index
@@ -618,8 +636,12 @@ int main(int argc, char ** argv) {
                     }
                     std::cout << "[" << result.request.chunk_index << "] "
                               << (result.request.is_final ? "tts final: " : "tts: ")
-                              << result.output_path << "\n";
+                              << result.output_path
+                              << " (synth " << result.elapsed_ms << " ms)\n";
                     std::cout.flush();
+                    if (player) {
+                        player->submit(result.output_path);
+                    }
                 });
         }
 
@@ -655,7 +677,8 @@ int main(int argc, char ** argv) {
                         std::lock_guard<std::mutex> lock(output_mutex);
                         std::cout << "[" << result.transcript.chunk_index << "] "
                                   << (result.transcript.is_final ? "translation final: " : "translation: ")
-                                  << result.translation << "\n";
+                                  << result.translation
+                                  << " (translate " << result.elapsed_ms << " ms)\n";
                         std::cout.flush();
                     }
                     submit_tts(result.transcript.chunk_index, result.translation, result.transcript.is_final);
@@ -790,7 +813,8 @@ int main(int argc, char ** argv) {
                     std::lock_guard<std::mutex> lock(output_mutex);
                     std::cout << "[" << transcript.chunk_index << "] "
                               << (transcript.is_final ? "asr final: " : "asr: ")
-                              << transcript.text << "\n";
+                              << transcript.text
+                              << " (asr " << transcript.elapsed_ms << " ms)\n";
                     std::cout.flush();
                 }
                 if (translator) {
@@ -846,7 +870,14 @@ int main(int argc, char ** argv) {
                     last_audio_debug = now;
                 }
             }
+            const auto asr_start = std::chrono::steady_clock::now();
             std::vector<vox::asr::Transcript> transcripts = push_asr_audio(samples);
+            const int64_t asr_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::steady_clock::now() - asr_start)
+                                               .count();
+            for (vox::asr::Transcript & transcript : transcripts) {
+                transcript.elapsed_ms = asr_elapsed_ms;
+            }
             if (final_silence_steps > 0) {
                 if (!transcripts.empty()) {
                     const bool has_final_transcript = std::any_of(
@@ -894,13 +925,24 @@ int main(int argc, char ** argv) {
         if (has_pending_final) {
             emit_final_transcript(pending_final);
         } else {
-            handle_transcripts(flush_asr());
+            const auto flush_start = std::chrono::steady_clock::now();
+            std::vector<vox::asr::Transcript> flushed = flush_asr();
+            const int64_t flush_elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                 std::chrono::steady_clock::now() - flush_start)
+                                                 .count();
+            for (vox::asr::Transcript & transcript : flushed) {
+                transcript.elapsed_ms = flush_elapsed_ms;
+            }
+            handle_transcripts(flushed);
         }
         if (translator) {
             translator->close();
         }
         if (tts) {
             tts->close();
+        }
+        if (player) {
+            player->close();
         }
     } catch (const std::exception & error) {
         std::cerr << "vox failed: " << error.what() << "\n";

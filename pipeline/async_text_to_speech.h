@@ -19,6 +19,7 @@ struct TextToSpeechResult {
     TextToSpeechRequest request;
     std::string output_path;
     std::string error;
+    int64_t elapsed_ms = 0;
 };
 
 class AsyncTextToSpeech {

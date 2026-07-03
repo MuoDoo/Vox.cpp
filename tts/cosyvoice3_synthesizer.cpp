@@ -154,6 +154,10 @@ std::string default_tts_play_command() {
 #endif
 }
 
+void play_audio_file(const std::string & command, const std::string & path) {
+    run_player(command, path);
+}
+
 void write_wav_mono_16(const std::string & path, const float * samples, int32_t sample_count, int32_t sample_rate) {
     if (path.empty()) {
         throw std::runtime_error("missing wav output path");

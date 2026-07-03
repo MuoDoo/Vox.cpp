@@ -1,6 +1,7 @@
 #include "async_text_to_speech.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <exception>
@@ -105,6 +106,7 @@ private:
 
             TextToSpeechResult result;
             result.request = std::move(request);
+            const auto start = std::chrono::steady_clock::now();
             try {
                 result.output_path = synthesize_(result.request);
             } catch (const std::exception & error) {
@@ -112,6 +114,9 @@ private:
             } catch (...) {
                 result.error = "unknown text-to-speech error";
             }
+            result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - start)
+                                    .count();
 
             try {
                 result_handler_(std::move(result));
