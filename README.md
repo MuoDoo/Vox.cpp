@@ -13,6 +13,7 @@ No network service is used at runtime. You need local model files under `models/
 - CMake 3.20+
 - A C++17 compiler
 - SDL2
+- Optional for the desktop GUI: Qt 6 Widgets
 
 macOS:
 
@@ -34,6 +35,19 @@ Then build:
 cmake -S . -B build
 cmake --build build --target vox -j
 ```
+
+Build the Qt desktop GUI when Qt 6 Widgets is installed:
+
+```sh
+cmake -S . -B build -DVOX_BUILD_QT_GUI=ON
+cmake --build build --target vox_gui -j
+```
+
+If Qt is not available, CMake skips `vox_gui` and still builds the CLI. The
+current GUI MVP is aimed at Windows with an already installed virtual audio
+cable. Install VB-CABLE from `https://vb-audio.com/Cable/`, refresh devices in
+the GUI, select `CABLE Input` as Vox's virtual mic output, then select
+`CABLE Output` as the microphone in Steam or the target game.
 
 Build only the reusable libraries and tests without the SDL microphone app:
 

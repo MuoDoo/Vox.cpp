@@ -9,6 +9,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 option(VOX_BUILD_TESTS "Build Vox tests" ON)
 option(VOX_BUILD_APPS "Build Vox command-line applications" ON)
+option(VOX_BUILD_QT_GUI "Build Vox Qt GUI when Qt6 Widgets is available" ON)
 if(APPLE)
     option(VOX_ENABLE_LLAMA_METAL "Enable the llama.cpp Metal backend on Apple platforms" ON)
 else()
