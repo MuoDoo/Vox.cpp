@@ -90,6 +90,25 @@ target_link_libraries(vox_tts_wav_writer_test
 
 add_test(NAME vox_tts_wav_writer_test COMMAND vox_tts_wav_writer_test)
 
+add_executable(vox_qwen3_tts_smoke_test
+    qwen3_tts_smoke_test.cpp
+)
+
+target_link_libraries(vox_qwen3_tts_smoke_test
+    PRIVATE
+        vox_tts
+)
+
+target_compile_definitions(vox_qwen3_tts_smoke_test
+    PRIVATE
+        VOX_TEST_QWEN_TTS_MODEL_PATH="${CMAKE_SOURCE_DIR}/models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf"
+        VOX_TEST_QWEN_TTS_CODEC_PATH="${CMAKE_SOURCE_DIR}/models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-tokenizer-12hz.gguf"
+        VOX_TEST_QWEN_TTS_OUTPUT_DIR="${CMAKE_SOURCE_DIR}/tts-output/qwen3-tts-smoke"
+)
+
+add_test(NAME vox_qwen3_tts_smoke_test COMMAND vox_qwen3_tts_smoke_test)
+set_tests_properties(vox_qwen3_tts_smoke_test PROPERTIES SKIP_RETURN_CODE 77)
+
 add_executable(vox_asr_translate_jfk_test
     asr_translate_jfk_test.cpp
 )

@@ -147,6 +147,28 @@ AsyncTextToSpeech::AsyncTextToSpeech(
 }
 
 AsyncTextToSpeech::AsyncTextToSpeech(
+    vox::tts::KokoroTtsConfig config,
+    ResultHandler result_handler) {
+    auto synthesizer = std::make_shared<vox::tts::KokoroSynthesizer>(std::move(config));
+    impl_ = std::make_unique<Impl>(
+        [synthesizer = std::move(synthesizer)](TextToSpeechRequest request) {
+            return synthesizer->synthesize(request.text, request.chunk_index, request.is_final);
+        },
+        std::move(result_handler));
+}
+
+AsyncTextToSpeech::AsyncTextToSpeech(
+    vox::tts::Qwen3TtsConfig config,
+    ResultHandler result_handler) {
+    auto synthesizer = std::make_shared<vox::tts::Qwen3TtsSynthesizer>(std::move(config));
+    impl_ = std::make_unique<Impl>(
+        [synthesizer = std::move(synthesizer)](TextToSpeechRequest request) {
+            return synthesizer->synthesize(request.text, request.chunk_index, request.is_final);
+        },
+        std::move(result_handler));
+}
+
+AsyncTextToSpeech::AsyncTextToSpeech(
     SynthesizeFunction synthesize,
     ResultHandler result_handler)
     : impl_(std::make_unique<Impl>(std::move(synthesize), std::move(result_handler))) {

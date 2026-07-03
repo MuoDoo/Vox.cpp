@@ -1,6 +1,8 @@
 #pragma once
 
 #include "cosyvoice3_synthesizer.h"
+#include "kokoro_synthesizer.h"
+#include "qwen3_tts_synthesizer.h"
 
 #include <cstdint>
 #include <functional>
@@ -28,6 +30,8 @@ public:
     using ResultHandler = std::function<void(TextToSpeechResult)>;
 
     AsyncTextToSpeech(vox::tts::CosyVoice3TtsConfig config, ResultHandler result_handler);
+    AsyncTextToSpeech(vox::tts::KokoroTtsConfig config, ResultHandler result_handler);
+    AsyncTextToSpeech(vox::tts::Qwen3TtsConfig config, ResultHandler result_handler);
     AsyncTextToSpeech(SynthesizeFunction synthesize, ResultHandler result_handler);
     ~AsyncTextToSpeech();
 

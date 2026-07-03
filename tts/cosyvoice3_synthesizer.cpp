@@ -28,6 +28,17 @@ struct CosyVoice3ContextDeleter {
 using CosyVoice3ContextPtr = std::unique_ptr<cosyvoice3_tts_context, CosyVoice3ContextDeleter>;
 
 std::string shell_quote(const std::string & value) {
+#if defined(_WIN32)
+    std::string quoted = "\"";
+    for (const char c : value) {
+        if (c == '"') {
+            quoted += '\\';
+        }
+        quoted += c;
+    }
+    quoted += "\"";
+    return quoted;
+#else
     std::string quoted = "'";
     for (const char c : value) {
         if (c == '\'') {
@@ -38,6 +49,7 @@ std::string shell_quote(const std::string & value) {
     }
     quoted += "'";
     return quoted;
+#endif
 }
 
 void run_player(const std::string & command, const std::string & output_path) {
@@ -149,6 +161,8 @@ void write_le(std::ofstream & out, T value) {
 std::string default_tts_play_command() {
 #if defined(__APPLE__)
     return "afplay";
+#elif defined(_WIN32)
+    return "explorer";
 #else
     return "aplay";
 #endif

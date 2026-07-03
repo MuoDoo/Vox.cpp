@@ -1,10 +1,10 @@
 # Vox.cpp
 
-Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`; TTS can synthesize translated text with a native CosyVoice3 GGUF runtime.
+Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`; TTS can synthesize translated text with native CosyVoice3, Kokoro, or Qwen3-TTS GGUF runtimes.
 
 ## Current Target
 
-`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `tts/` links the CosyVoice3 GGUF runtime from the CrispASR submodule in-process. `apps/vox.cpp` is the main program entry; it captures microphone audio, feeds ASR, optionally translates transcripts, and can synthesize translated text to wav files.
+`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `tts/` links CrispASR's CosyVoice3, Kokoro, and Qwen3-TTS GGUF runtimes in-process. `apps/vox.cpp` is the main program entry; it captures microphone audio, feeds ASR, optionally translates transcripts, and can synthesize translated text to wav files.
 
 No network service is used at runtime. You need local model files under `models/`.
 
@@ -120,9 +120,11 @@ The component builds the same translation prompt text and applies the GGUF chat 
 Tencent's model card recommends `top_k=20`, `top_p=0.6`, `temperature=0.7`, and `repeat_penalty=1.05`; these are the component defaults.
 Check the Tencent HY Community License before distributing a product that includes this model.
 
-### CosyVoice3 TTS
+### TTS
 
-The TTS integration calls CrispASR's CosyVoice3 C ABI directly from the `external/CrispASR` submodule. It does not shell out to the `crispasr` executable; model loading, voice lookup, synthesis, and WAV writing failures are surfaced directly in-process.
+The TTS integration calls CrispASR C ABIs directly from the `external/CrispASR` submodule. It does not shell out to the `crispasr` executable; model loading, voice lookup, synthesis, and WAV writing failures are surfaced directly in-process.
+
+CosyVoice3 remains the default TTS engine.
 
 Download the minimum baked-voice CosyVoice3 GGUF set:
 
@@ -140,6 +142,48 @@ models/tts/cosyvoice3/cosyvoice3-voices.gguf
 ```
 
 Pass the LLM GGUF with `--tts-model`. The runtime auto-discovers sibling flow, HiFT, and voices files when they are in the same directory. If they live elsewhere, pass `--tts-flow-model`, `--tts-hift-model`, and `--tts-voices-model`.
+
+Kokoro-82M is available with `--tts-engine kokoro`:
+
+```sh
+scripts/download-kokoro-tts-gguf.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/download-kokoro-tts-gguf.ps1
+```
+
+That creates:
+
+```text
+models/tts/kokoro/kokoro-82m-q8_0.gguf
+models/tts/kokoro/kokoro-voice-af_heart.gguf
+```
+
+Pass the Kokoro model with `--tts-model`. The runtime auto-discovers `kokoro-voice-af_heart.gguf` in the same directory, or use `--tts-voice-model PATH`. Kokoro uses espeak-ng for phonemization; install espeak-ng or keep the `espeak-ng` executable on PATH. Use `--tts-language LANG` to override the espeak-ng voice, otherwise the ASR language is reused and `auto` becomes `en-us`.
+
+Qwen3-TTS 0.6B is available with `--tts-engine qwen3-tts`. The recommended quick-test path is CustomVoice Q8_0 because it has built-in speakers and does not need a reference WAV:
+
+```sh
+scripts/download-qwen3-tts-gguf.sh
+```
+
+On Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/download-qwen3-tts-gguf.ps1
+```
+
+That creates:
+
+```text
+models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf
+models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-tokenizer-12hz.gguf
+```
+
+Pass the talker GGUF with `--tts-model`. The runtime auto-discovers `qwen3-tts-tokenizer-12hz.gguf` in the same directory, or use `--tts-codec-model PATH`. CustomVoice speakers include `aiden`, `dylan`, `eric`, `ono_anna`, `ryan`, `serena`, `sohee`, `uncle_fu`, and `vivian`; use `dylan` or `eric` for Chinese output tests. The Base variant can also be downloaded with `scripts/download-qwen3-tts-gguf.sh models/tts/qwen3-tts-0.6b-base base q8_0`; it requires `--tts-voice-model` pointing to a baked voice GGUF or a reference WAV plus `--tts-ref-text`.
 
 ## Run
 
@@ -252,13 +296,56 @@ The same translation path with Whisper ASR is:
 
 The app translates ASR updates on a worker thread so llama.cpp inference does not block microphone capture. If translation falls behind, pending partial ASR updates are coalesced to the latest text; final results are always processed.
 
-Enable TTS for translated final results by adding `--tts-model`. This writes one wav per synthesized result under `tts-output/`:
+Enable TTS for translated final results by adding `--tts-model`. This writes one wav per synthesized result under `tts-output/`. CosyVoice3 is the default engine:
 
 ```sh
 ./build/bin/vox --final-only \
   --tts-model models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf \
   models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
   auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
+Kokoro-82M uses the same pipeline with `--tts-engine kokoro`:
+
+```sh
+./build/bin/vox --final-only \
+  --tts-engine kokoro \
+  --tts-no-gpu \
+  --tts-model models/tts/kokoro/kokoro-82m-q8_0.gguf \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  auto \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  English
+```
+
+On macOS, keep `--tts-no-gpu` for Kokoro if Metal output sounds like high-frequency noise. ASR can still use GPU with this option.
+
+Qwen3-TTS 0.6B CustomVoice can synthesize without a reference WAV. For English speech translated to Chinese, use a Chinese speaker such as `dylan`:
+
+```sh
+./build/bin/vox --final-only \
+  --tts-engine qwen3-tts \
+  --tts-model models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf \
+  --tts-voice dylan \
+  --tts-language Chinese \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  en \
+  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
+  Chinese
+```
+
+For Chinese speech translated to English, pick an English speaker:
+
+```sh
+./build/bin/vox --final-only \
+  --tts-engine qwen3-tts \
+  --tts-model models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf \
+  --tts-voice vivian \
+  --tts-language English \
+  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
+  zh \
   models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
   English
 ```
@@ -287,6 +374,8 @@ TTS synthesis on CPU is dominated by the flow-matching stage. `--tts-flow-steps 
   English
 ```
 
+For Kokoro, `--tts-length-scale N` controls duration. Values above `1.0` speak slower; values below `1.0` speak faster.
+
 The app intentionally has no CLI framework yet. The reusable ASR behavior lives in `vox::asr::StreamingWhisper` and `vox::asr::StreamingQwenAsr`; SDL microphone capture is an app-layer adapter. The reusable scheduling behavior lives in `vox::pipeline::AsyncTranscriptTranslator` and `vox::pipeline::AsyncTextToSpeech`.
 
 ## ASR Stream API
@@ -312,7 +401,7 @@ Qwen3-ASR uses the same streaming shape, with a `StreamingQwenAsrConfig` that in
 The Whisper ASR test uses `external/whisper.cpp/samples/jfk.wav` as a local fixture and `models/ggml-base.bin` as the model.
 The Qwen3-ASR config test does not load a model; it covers language option normalization for the llama.cpp path. The Qwen3-ASR smoke test uses `tests/fixtures/asr_en.wav` plus the default Qwen3-ASR 1.7B Q8_0 model and mmproj; if either model is missing, the test is skipped. The smoke test runs on CPU by default; set `VOX_TEST_QWEN_USE_GPU=1` to exercise the GPU path.
 The HY-MT test loads `models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf`; if it is missing, the test is skipped.
-The TTS WAV writer test does not load a model; it validates the local WAV output path used by the CosyVoice3 synthesizer.
+The TTS WAV writer test does not load a model; it validates the local WAV output path shared by the TTS synthesizers.
 
 ```sh
 ctest --test-dir build --output-on-failure
