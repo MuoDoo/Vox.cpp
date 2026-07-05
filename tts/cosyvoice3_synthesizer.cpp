@@ -272,9 +272,6 @@ public:
             throw std::runtime_error("CosyVoice3 voice not found: " + config_.voice);
         }
 
-        if (config_.flow_steps > 0) {
-            cosyvoice3_tts_set_flow_steps(context_.get(), config_.flow_steps);
-        }
     }
 
     std::string synthesize(const std::string & text, uint64_t chunk_index, bool is_final) {

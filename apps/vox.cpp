@@ -11,6 +11,7 @@
 #include <chrono>
 #include <csignal>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -41,6 +42,7 @@ struct CliOptions {
     std::string tts_voices_model_path;
     std::string tts_codec_model_path;
     std::string tts_voice_model_path;
+    std::string tts_crispasr_path;
     std::string tts_ref_text;
     std::string tts_instruct;
     std::string tts_language;
@@ -57,7 +59,6 @@ struct CliOptions {
     int32_t vad_max_speech_ms = 0;
     int32_t tts_threads = 0;
     int32_t tts_max_tokens = 0;
-    int32_t tts_flow_steps = 0;
     float rms_threshold = -1.0f;
     float no_speech_threshold = -1.0f;
     float vad_threshold = -1.0f;
@@ -157,7 +158,10 @@ TtsEngine parse_tts_engine(const std::string & value) {
         return TtsEngine::Kokoro;
     }
     if (value == "qwen3-tts" || value == "qwen3tts" || value == "qwen3" ||
-        value == "qwen3-tts-customvoice") {
+        value == "qwen3-tts-customvoice" || value == "qwen3-tts-cv" ||
+        value == "qwen3-tts-0.6b-customvoice" || value == "qwen3-tts-1.7b-customvoice" ||
+        value == "qwen3-tts-base" || value == "qwen3-tts-0.6b-base" ||
+        value == "qwen3-tts-1.7b-base" || value == "qwen3-tts-voicedesign") {
         return TtsEngine::Qwen3Tts;
     }
     throw std::runtime_error("unknown TTS engine: " + value);
@@ -200,6 +204,28 @@ std::string default_tts_language(const CliOptions & options,
         return "Chinese";
     }
     return asr_language == "auto" ? std::string("en-us") : asr_language;
+}
+
+std::string qwen3_tts_backend_name(const std::string & tts_engine, bool has_voice_model) {
+    std::string value = tts_engine;
+    std::transform(
+        value.begin(),
+        value.end(),
+        value.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        });
+
+    if (value.find("voicedesign") != std::string::npos || value == "qwen3-tts-vd") {
+        return "qwen3-tts-voicedesign";
+    }
+    if (value.find("customvoice") != std::string::npos || value == "qwen3-tts-cv") {
+        return "qwen3-tts-customvoice";
+    }
+    if (value.find("base") != std::string::npos) {
+        return "qwen3-tts";
+    }
+    return has_voice_model ? "qwen3-tts" : "qwen3-tts-customvoice";
 }
 
 int32_t parse_i32(const std::string & value, const std::string & option_name) {
@@ -293,6 +319,8 @@ CliOptions parse_cli(int argc, char ** argv) {
             options.tts_codec_model_path = option_value(arg, "--tts-codec-model", i, argc, argv);
         } else if (arg == "--tts-voice-model" || arg.rfind("--tts-voice-model=", 0) == 0) {
             options.tts_voice_model_path = option_value(arg, "--tts-voice-model", i, argc, argv);
+        } else if (arg == "--tts-crispasr-path" || arg.rfind("--tts-crispasr-path=", 0) == 0) {
+            options.tts_crispasr_path = option_value(arg, "--tts-crispasr-path", i, argc, argv);
         } else if (arg == "--tts-ref-text" || arg.rfind("--tts-ref-text=", 0) == 0) {
             options.tts_ref_text = option_value(arg, "--tts-ref-text", i, argc, argv);
         } else if (arg == "--tts-instruct" || arg.rfind("--tts-instruct=", 0) == 0) {
@@ -310,9 +338,6 @@ CliOptions parse_cli(int argc, char ** argv) {
         } else if (arg == "--tts-max-tokens" || arg.rfind("--tts-max-tokens=", 0) == 0) {
             options.tts_max_tokens =
                 parse_i32(option_value(arg, "--tts-max-tokens", i, argc, argv), "--tts-max-tokens");
-        } else if (arg == "--tts-flow-steps" || arg.rfind("--tts-flow-steps=", 0) == 0) {
-            options.tts_flow_steps =
-                parse_i32(option_value(arg, "--tts-flow-steps", i, argc, argv), "--tts-flow-steps");
         } else if (arg == "--tts-temperature" || arg.rfind("--tts-temperature=", 0) == 0) {
             options.tts_temperature =
                 parse_float(option_value(arg, "--tts-temperature", i, argc, argv), "--tts-temperature");
@@ -427,9 +452,6 @@ CliOptions parse_cli(int argc, char ** argv) {
         if (options.tts_max_tokens < 0) {
             throw std::runtime_error("TTS max tokens must be non-negative");
         }
-        if (options.tts_flow_steps < 0) {
-            throw std::runtime_error("TTS flow steps must be non-negative");
-        }
         if (options.tts_temperature < 0.0f) {
             throw std::runtime_error("TTS temperature must be non-negative");
         }
@@ -444,8 +466,9 @@ CliOptions parse_cli(int argc, char ** argv) {
         }
         if (tts_engine != TtsEngine::Qwen3Tts &&
             (!options.tts_codec_model_path.empty() || !options.tts_ref_text.empty() ||
-             !options.tts_instruct.empty())) {
-            throw std::runtime_error("--tts-codec-model, --tts-ref-text, and --tts-instruct only apply to Qwen3-TTS");
+             !options.tts_instruct.empty() || !options.tts_crispasr_path.empty())) {
+            throw std::runtime_error(
+                "--tts-codec-model, --tts-ref-text, --tts-instruct, and --tts-crispasr-path only apply to Qwen3-TTS");
         }
     }
     parse_asr_engine(options.asr_engine);
@@ -480,6 +503,8 @@ void print_usage(const char * program) {
               << "                      optional Qwen3-TTS tokenizer/codec GGUF path\n"
               << "      --tts-voice-model PATH\n"
               << "                      optional Kokoro voice-pack, or Qwen3-TTS voice-pack/ref WAV path\n"
+              << "      --tts-crispasr-path PATH\n"
+              << "                      official crispasr helper path for Qwen3-TTS; default build helper, VOX_CRISPASR_CLI, or PATH\n"
               << "      --tts-ref-text TEXT\n"
               << "                      Qwen3-TTS reference transcription when --tts-voice-model points to a WAV\n"
               << "      --tts-instruct TEXT\n"
@@ -500,8 +525,6 @@ void print_usage(const char * program) {
               << "                      TTS speech-token RNG seed; default 42\n"
               << "      --tts-max-tokens N\n"
               << "                      TTS speech-token decode cap; default model runtime value\n"
-              << "      --tts-flow-steps N\n"
-              << "                      CFM flow Euler steps; default model value (10); fewer = faster, lower quality\n"
               << "      --tts-no-gpu\n"
               << "                      disable TTS GPU acceleration while leaving ASR GPU enabled\n"
               << "      --tts-play\n"
@@ -803,6 +826,8 @@ int main(int argc, char ** argv) {
                     std::move(tts_result_handler));
             } else if (tts_engine == TtsEngine::Qwen3Tts) {
                 vox::tts::Qwen3TtsConfig tts_config;
+                tts_config.crispasr_path = cli.tts_crispasr_path;
+                tts_config.backend = qwen3_tts_backend_name(cli.tts_engine, !tts_voice_model_path.empty());
                 tts_config.model_path = tts_model_path;
                 tts_config.codec_model_path = tts_codec_model_path;
                 tts_config.voice_model_path = tts_voice_model_path;
@@ -832,7 +857,6 @@ int main(int argc, char ** argv) {
                 tts_config.output_dir = tts_output_dir;
                 tts_config.threads = cli.tts_threads > 0 ? cli.tts_threads : common_config.threads;
                 tts_config.max_tokens = cli.tts_max_tokens;
-                tts_config.flow_steps = cli.tts_flow_steps;
                 tts_config.temperature = cli.tts_temperature;
                 tts_config.seed = cli.tts_seed;
                 tts_config.use_gpu = common_config.use_gpu && !cli.tts_disable_gpu;
@@ -999,10 +1023,14 @@ int main(int argc, char ** argv) {
                     }
                 } else if (tts_engine == TtsEngine::Qwen3Tts) {
                     std::cout << " tts_language=" << tts_language
+                              << " tts_backend=" << qwen3_tts_backend_name(cli.tts_engine, !tts_voice_model_path.empty())
                               << " tts_voice=" << cli.tts_voice
                               << " tts_temperature=" << cli.tts_temperature
                               << " tts_seed=" << cli.tts_seed
                               << " tts_max_codec_steps=" << cli.tts_max_tokens;
+                    if (!cli.tts_crispasr_path.empty()) {
+                        std::cout << " tts_crispasr=" << cli.tts_crispasr_path;
+                    }
                     if (!tts_codec_model_path.empty()) {
                         std::cout << " tts_codec_model=" << tts_codec_model_path;
                     }
@@ -1019,9 +1047,7 @@ int main(int argc, char ** argv) {
                     std::cout << " tts_voice=" << cli.tts_voice
                               << " tts_temperature=" << cli.tts_temperature
                               << " tts_seed=" << cli.tts_seed
-                              << " tts_max_tokens=" << cli.tts_max_tokens
-                              << " tts_flow_steps="
-                              << (cli.tts_flow_steps > 0 ? std::to_string(cli.tts_flow_steps) : std::string("default"));
+                              << " tts_max_tokens=" << cli.tts_max_tokens;
                     if (!tts_flow_model_path.empty()) {
                         std::cout << " tts_flow_model=" << tts_flow_model_path;
                     }

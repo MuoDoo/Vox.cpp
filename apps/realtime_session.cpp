@@ -98,6 +98,13 @@ int32_t tts_sample_rate(RealtimeTtsEngine engine) {
     return vox::tts::kCosyVoice3SampleRate;
 }
 
+std::string default_qwen3_tts_backend(const RealtimeSessionConfig & config) {
+    if (!config.tts_backend.empty()) {
+        return config.tts_backend;
+    }
+    return config.tts_voice_model_path.empty() ? "qwen3-tts-customvoice" : "qwen3-tts";
+}
+
 } // namespace
 
 RealtimeSession::RealtimeSession() = default;
@@ -258,6 +265,8 @@ void RealtimeSession::run(RealtimeSessionConfig config) {
                 std::move(tts_result_handler));
         } else if (config.tts_engine == RealtimeTtsEngine::Qwen3Tts) {
             vox::tts::Qwen3TtsConfig tts_config;
+            tts_config.crispasr_path = config.tts_crispasr_path;
+            tts_config.backend = default_qwen3_tts_backend(config);
             tts_config.model_path = tts_model_path;
             tts_config.codec_model_path = tts_codec_model_path;
             tts_config.voice_model_path = tts_voice_model_path;
@@ -292,7 +301,6 @@ void RealtimeSession::run(RealtimeSessionConfig config) {
             tts_config.output_dir = config.tts_output_dir;
             tts_config.threads = config.threads;
             tts_config.max_tokens = config.tts_max_tokens;
-            tts_config.flow_steps = config.tts_flow_steps;
             tts_config.temperature = config.tts_temperature;
             tts_config.seed = config.tts_seed;
             tts_config.use_gpu = config.use_gpu;

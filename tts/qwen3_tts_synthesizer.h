@@ -9,6 +9,8 @@ namespace vox::tts {
 inline constexpr int32_t kQwen3TtsSampleRate = 24000;
 
 struct Qwen3TtsConfig {
+    std::string crispasr_path;
+    std::string backend = "qwen3-tts-customvoice";
     std::string model_path;
     std::string codec_model_path;
     std::string voice_model_path;

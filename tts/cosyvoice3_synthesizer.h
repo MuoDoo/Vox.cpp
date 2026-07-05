@@ -19,7 +19,6 @@ struct CosyVoice3TtsConfig {
 
     int32_t threads = 4;
     int32_t max_tokens = 0;
-    int32_t flow_steps = 0; // 0 = model default (10); fewer = faster, lower quality
     float temperature = 0.8f;
     uint64_t seed = 42;
 

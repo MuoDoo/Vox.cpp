@@ -32,17 +32,20 @@ struct RealtimeSessionConfig {
     std::string translation_model_path = "models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf";
     std::string target_language = "Chinese";
 
-    RealtimeTtsEngine tts_engine = RealtimeTtsEngine::CosyVoice3;
-    std::string tts_model_path = "models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf";
+    RealtimeTtsEngine tts_engine = RealtimeTtsEngine::Qwen3Tts;
+    std::string tts_model_path =
+        "models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf";
     std::string tts_flow_model_path;
     std::string tts_hift_model_path;
     std::string tts_voices_model_path;
     std::string tts_codec_model_path;
     std::string tts_voice_model_path;
+    std::string tts_crispasr_path;
+    std::string tts_backend;
     std::string tts_ref_text;
     std::string tts_instruct;
     std::string tts_language = "Chinese";
-    std::string tts_voice = "zero_shot";
+    std::string tts_voice = "dylan";
     std::string tts_output_dir = "tts-output";
 
     int32_t capture_device_id = -1;
@@ -53,7 +56,6 @@ struct RealtimeSessionConfig {
     int32_t overlap_ms = 300;
     int32_t final_silence_steps = 1;
     int32_t tts_max_tokens = 0;
-    int32_t tts_flow_steps = 0;
 
     float min_audio_rms = 0.001f;
     float input_gain = 1.0f;

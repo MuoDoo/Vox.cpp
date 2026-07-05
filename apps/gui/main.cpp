@@ -85,7 +85,7 @@ public:
         translation_model_ = add_path_row(model_layout, model_group, "Translation GGUF",
                                           "models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf");
         tts_model_ = add_path_row(model_layout, model_group, "TTS GGUF",
-                                  "models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf");
+                                  "models/tts/qwen3-tts-0.6b-customvoice/qwen3-tts-12hz-0.6b-customvoice-q8_0.gguf");
         root->addWidget(model_group);
 
         auto * settings_group = new QGroupBox("Runtime", central);
@@ -93,7 +93,7 @@ public:
 
         source_language_ = new QLineEdit("auto", settings_group);
         target_language_ = new QLineEdit("Chinese", settings_group);
-        tts_voice_ = new QLineEdit("zero_shot", settings_group);
+        tts_voice_ = new QLineEdit("dylan", settings_group);
         gpu_enabled_ = new QCheckBox("GPU acceleration", settings_group);
         gpu_enabled_->setChecked(true);
         speak_partials_ = new QCheckBox("Speak partial transcripts", settings_group);
@@ -101,7 +101,7 @@ public:
 
         settings_layout->addRow("Source language", source_language_);
         settings_layout->addRow("Target language", target_language_);
-        settings_layout->addRow("CosyVoice3 voice", tts_voice_);
+        settings_layout->addRow("Qwen3-TTS voice", tts_voice_);
         settings_layout->addRow("", gpu_enabled_);
         settings_layout->addRow("", speak_partials_);
         root->addWidget(settings_group);
@@ -262,7 +262,7 @@ private:
         vox::app::RealtimeSessionConfig config;
         config.project_root = QString::fromUtf8(VOX_PROJECT_ROOT).toStdString();
         config.asr_engine = vox::app::RealtimeAsrEngine::Qwen3;
-        config.tts_engine = vox::app::RealtimeTtsEngine::CosyVoice3;
+        config.tts_engine = vox::app::RealtimeTtsEngine::Qwen3Tts;
         config.asr_model_path = asr_model_->text().toStdString();
         config.asr_mmproj_path = asr_mmproj_->text().toStdString();
         config.translation_model_path = translation_model_->text().toStdString();

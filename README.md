@@ -1,10 +1,10 @@
 # Vox.cpp
 
-Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`; TTS can synthesize translated text with native CosyVoice3, Kokoro, or Qwen3-TTS GGUF runtimes.
+Local voice-to-voice experiments in C++. ASR can run through either the existing `whisper.cpp` path or a llama.cpp/libmtmd Qwen3-ASR path; translation uses `llama.cpp`; TTS can synthesize translated text with in-process CosyVoice3 or Qwen3-TTS through the official CrispASR CLI helper.
 
 ## Current Target
 
-`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `tts/` links CrispASR's CosyVoice3, Kokoro, and Qwen3-TTS GGUF runtimes in-process. `apps/vox.cpp` is the main program entry; it captures microphone audio, feeds ASR, optionally translates transcripts, and can synthesize translated text to wav files.
+`asr/` contains streaming ASR components that accept mono float32 PCM at 16 kHz. `StreamingQwenAsr` is the default ASR path and drives Qwen3-ASR GGUF models through llama.cpp `libmtmd`; `StreamingWhisper` keeps the existing Whisper fallback path. `translate/` is a llama.cpp translation component for GGUF translation models. `tts/` links CrispASR's CosyVoice3 runtime in-process and calls an official CrispASR helper process for Qwen3-TTS to avoid mixing two ggml ABIs in one binary. `apps/vox.cpp` is the main program entry; it captures microphone audio, feeds ASR, optionally translates transcripts, and can synthesize translated text to wav files.
 
 No network service is used at runtime. You need local model files under `models/`.
 
@@ -36,6 +36,14 @@ cmake -S . -B build
 cmake --build build --target vox -j
 ```
 
+Qwen3-TTS uses the official CrispASR CLI as a helper process. Build it once:
+
+```sh
+cmake --build build --target vox_crispasr_helper -j
+```
+
+At runtime Vox first tries the configured helper path, then `VOX_CRISPASR_CLI`, then `build/crispasr-helper/bin/crispasr`, then `crispasr` on `PATH`.
+
 Build the Qt desktop GUI when Qt 6 Widgets is installed:
 
 ```sh
@@ -45,9 +53,11 @@ cmake --build build --target vox_gui -j
 
 If Qt is not available, CMake skips `vox_gui` and still builds the CLI. The
 current GUI MVP is aimed at Windows with an already installed virtual audio
-cable. Install VB-CABLE from `https://vb-audio.com/Cable/`, refresh devices in
-the GUI, select `CABLE Input` as Vox's virtual mic output, then select
-`CABLE Output` as the microphone in Steam or the target game.
+cable. It defaults to Qwen3-TTS CustomVoice, so build `vox_crispasr_helper` and
+download `qwen3-tts` before starting a voice-output session. Install VB-CABLE
+from `https://vb-audio.com/Cable/`, refresh devices in the GUI, select
+`CABLE Input` as Vox's virtual mic output, then select `CABLE Output` as the
+microphone in Steam or the target game.
 
 Build only the reusable libraries and tests without the SDL microphone app:
 
@@ -76,7 +86,6 @@ The `vox` CLI can list, download, verify, repair, and remove known local models:
 ```sh
 ./build/bin/vox model list
 ./build/bin/vox model download qwen3-asr-1.7b
-./build/bin/vox model download kokoro-tts
 ./build/bin/vox model download qwen3-tts
 ./build/bin/vox model verify qwen3-asr-1.7b
 ./build/bin/vox model repair qwen3-asr-1.7b
@@ -153,9 +162,7 @@ Check the Tencent HY Community License before distributing a product that includ
 
 ### TTS
 
-The TTS integration calls CrispASR C ABIs directly from the `external/CrispASR` submodule. It does not shell out to the `crispasr` executable; model loading, voice lookup, synthesis, and WAV writing failures are surfaced directly in-process.
-
-CosyVoice3 remains the default TTS engine.
+CosyVoice3 calls the official CrispASR C ABI directly in-process. Qwen3-TTS calls the official `crispasr` CLI helper, because latest official CrispASR's Qwen3-TTS path depends on CrispASR's patched `ggml_col2im_1d` op while Vox keeps llama.cpp's ggml in-process for ASR/translation.
 
 Download the minimum baked-voice CosyVoice3 GGUF set:
 
@@ -174,7 +181,7 @@ models/tts/cosyvoice3/cosyvoice3-voices.gguf
 
 Pass the LLM GGUF with `--tts-model`. The runtime auto-discovers sibling flow, HiFT, and voices files when they are in the same directory. If they live elsewhere, pass `--tts-flow-model`, `--tts-hift-model`, and `--tts-voices-model`.
 
-Kokoro-82M is available with `--tts-engine kokoro`:
+Kokoro-82M model management is still available, but `--tts-engine kokoro` is not enabled in the current in-process build:
 
 ```sh
 ./build/bin/vox model download kokoro-tts
@@ -195,7 +202,7 @@ models/tts/kokoro/kokoro-voice-af_heart.gguf
 
 Pass the Kokoro model with `--tts-model`. The runtime auto-discovers `kokoro-voice-af_heart.gguf` in the same directory, or use `--tts-voice-model PATH`. Kokoro uses espeak-ng for phonemization; install espeak-ng or keep the `espeak-ng` executable on PATH. Use `--tts-language LANG` to override the espeak-ng voice, otherwise the ASR language is reused and `auto` becomes `en-us`.
 
-Qwen3-TTS 0.6B is available with `--tts-engine qwen3-tts`. The recommended quick-test path is CustomVoice Q8_0 because it has built-in speakers and does not need a reference WAV:
+Qwen3-TTS 0.6B is available with `--tts-engine qwen3-tts` after building or installing the official CrispASR helper. The recommended quick-test path is CustomVoice Q8_0 because it has built-in speakers and does not need a reference WAV:
 
 ```sh
 ./build/bin/vox model download qwen3-tts
@@ -338,20 +345,7 @@ Enable TTS for translated final results by adding `--tts-model`. This writes one
   English
 ```
 
-Kokoro-82M uses the same pipeline with `--tts-engine kokoro`:
-
-```sh
-./build/bin/vox --final-only \
-  --tts-engine kokoro \
-  --tts-no-gpu \
-  --tts-model models/tts/kokoro/kokoro-82m-q8_0.gguf \
-  models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
-  auto \
-  models/translate/HY-MT1.5-1.8B-Q4_K_M.gguf \
-  English
-```
-
-On macOS, keep `--tts-no-gpu` for Kokoro if Metal output sounds like high-frequency noise. ASR can still use GPU with this option.
+Kokoro-82M model management is retained, but the current build does not enable `--tts-engine kokoro` because it hits the same official CrispASR ggml op mismatch. Prefer Qwen3-TTS for the helper-backed path.
 
 Qwen3-TTS 0.6B CustomVoice can synthesize without a reference WAV. For English speech translated to Chinese, use a Chinese speaker such as `dylan`:
 
@@ -394,10 +388,10 @@ To play each generated wav after synthesis on macOS:
 
 By default, TTS only synthesizes final translations to avoid overlapping partial speech. Use `--tts-partials` for lower latency experiments.
 
-TTS synthesis on CPU is dominated by the flow-matching stage. `--tts-flow-steps N` lowers the CFM Euler step count from the model default (10) to trade audio quality for speed; 5-6 steps is usually a good compromise:
+TTS synthesis on CPU is dominated by the flow-matching stage. Official CrispASR supports `COSYVOICE3_FLOW_STEPS=N` to lower the CFM Euler step count from the model default (10) and trade audio quality for speed; 5-6 steps is usually a good compromise:
 
 ```sh
-./build/bin/vox --final-only --tts-play --tts-flow-steps 5 \
+COSYVOICE3_FLOW_STEPS=5 ./build/bin/vox --final-only --tts-play \
   --tts-model models/tts/cosyvoice3/cosyvoice3-llm-q4_k.gguf \
   models/asr/qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf \
   auto \
